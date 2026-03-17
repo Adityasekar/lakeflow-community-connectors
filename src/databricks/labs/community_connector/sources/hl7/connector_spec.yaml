@@ -1,0 +1,46 @@
+# HL7 v2 Community Connector Spec
+# This file defines the specification for the connector including
+# connection parameters and allowlist options.
+#
+# This connector ingests HL7 v2 message files (.hl7 / .txt) from a
+# Databricks Unity Catalog Volume path. Each HL7 segment type becomes
+# its own Delta table, enabling structured analytics over clinical data.
+#
+# Supported tables (segment types):
+#   msh  - Message Header       pid  - Patient Identification
+#   pv1  - Patient Visit        obr  - Observation Request
+#   obx  - Observation Result   al1  - Patient Allergy
+#   dg1  - Diagnosis            nk1  - Next of Kin
+#   evn  - Event Type
+#
+# Custom / Z-segments are supported via the segment_type table option.
+
+# ============================================================================
+# Connection Parameters
+# These are provided when creating the Unity Catalog connection.
+# ============================================================================
+display_name: HL7 v2
+connection:
+  parameters:
+    - name: volume_path
+      type: string
+      required: true
+      description: >
+        Path to the Unity Catalog Volume directory containing HL7 v2 message
+        files. Must be accessible to the pipeline compute.
+        Example: /Volumes/healthcare/raw/hl7_feed/
+
+    - name: file_pattern
+      type: string
+      required: false
+      description: >
+        Glob pattern used to match HL7 files within the volume_path.
+        Defaults to *.hl7.  Use **/*.hl7 for recursive directory search,
+        or *.txt if files use the .txt extension.
+
+# ============================================================================
+# External Options Allowlist
+# These table-specific options can be passed per-table in the pipeline
+# configuration via externalOptionsAllowList on the UC connection.
+# ============================================================================
+external_options_allowlist: "volume_path,file_pattern,segment_type,max_records_per_batch"
