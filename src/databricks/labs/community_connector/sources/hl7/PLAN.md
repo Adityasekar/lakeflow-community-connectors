@@ -335,6 +335,25 @@ Incremental cursor:
 
 ---
 
+## Backlog
+
+### Configurable segment tables via options
+
+Currently `list_tables()` returns a hardcoded list of 9 segment types. A future improvement would allow users to configure which segments they want as tables via a `segment_types` connector option:
+
+```
+segment_types = "msh,pid,pv1,obx"   # only ingest these four
+```
+
+Implementation:
+- In `__init__`, read `options.get("segment_types", ",".join(SEGMENT_TABLES))` and store as `self._tables`
+- `list_tables()` returns `self._tables` instead of `list(SEGMENT_TABLES)`
+- Add `segment_types` to `external_options_allowlist` in `connector_spec.yaml`
+
+This is low-effort and useful when users want to reduce pipeline scope (e.g. a lab-only pipeline that only needs `obr` and `obx`).
+
+---
+
 ## Verification
 
 1. Place sample `.hl7` files in a Unity Catalog Volume

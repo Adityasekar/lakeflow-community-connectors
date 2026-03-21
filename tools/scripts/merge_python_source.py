@@ -469,6 +469,7 @@ def deduplicate_imports(import_lists: List[List[str]]) -> List[str]:
 
     # Categorize imports into standard library and third-party
     stdlib_modules = {
+        "__future__",
         "sys",
         "os",
         "re",

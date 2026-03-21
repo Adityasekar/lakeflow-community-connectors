@@ -86,12 +86,19 @@ class HL7Segment:
     So ``get_field(n)`` → ``parts[n]``.
     """
 
-    __slots__ = ("segment_type", "_fields", "_enc")
+    __slots__ = ("segment_type", "_fields", "_enc", "raw_line")
 
-    def __init__(self, segment_type: str, fields: list[str], enc: HL7EncodingChars) -> None:
+    def __init__(
+        self,
+        segment_type: str,
+        fields: list[str],
+        enc: HL7EncodingChars,
+        raw_line: str = "",
+    ) -> None:
         self.segment_type = segment_type
         self._fields = fields
         self._enc = enc
+        self.raw_line = raw_line
 
     def get_field(self, n: int, default: str = "") -> str:
         """Return the raw value of field *n* (1-based).
@@ -235,7 +242,7 @@ def parse_message(text: str) -> HL7Message | None:
             # After splitting by "|", parts[1] = "^~\&" (MSH-2), parts[2] = SendingApp (MSH-3).
             # Insert the field separator at index 1 so that get_field(N) == MSH-N for all N >= 1.
             parts.insert(1, field_sep)
-        segments.append(HL7Segment(seg_type, parts, enc))
+        segments.append(HL7Segment(seg_type, parts, enc, line))
 
     if not segments:
         return None

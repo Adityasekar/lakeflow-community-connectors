@@ -9,7 +9,9 @@ Every micro-batch picks up only files modified after the last cursor value.
 
 from __future__ import annotations
 
+import re
 import warnings
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -23,11 +25,17 @@ from databricks.labs.community_connector.sources.hl7.hl7_parser import (
 )
 from databricks.labs.community_connector.sources.hl7.hl7_schemas import (
     SEGMENT_TABLES,
+    TABLE_DESCRIPTIONS,
     get_schema,
 )
 
 _DEFAULT_FILE_PATTERN = "*.hl7"
 _DEFAULT_MAX_RECORDS = 10_000
+
+# Segment types that appear at most once per message; PK = message_id alone.
+# All other known segment types (obx, obr, al1, dg1, nk1) repeat and require
+# (message_id, set_id) as a composite PK.
+_SINGLE_SEGMENT_TABLES = frozenset({"msh", "evn", "pid", "pv1"})
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +54,42 @@ def _i(s: str) -> int | None:
         return None
     try:
         return int(s.strip())
+    except ValueError:
+        return None
+
+
+_DTM_RE = re.compile(
+    r"^(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?(\d{2})?(?:\.\d+)?([+-]\d{4})?$"
+)
+
+
+def _parse_dtm(s: str) -> datetime | None:
+    """Parse an HL7 DTM string to a Python datetime.
+
+    Handles partial precision (YYYY, YYYYMM, YYYYMMDD, YYYYMMDDHHMMSS)
+    and optional timezone offset (e.g. +0500, -0800).
+    Returns None for empty or unparseable input.
+    """
+    if not s:
+        return None
+    m = _DTM_RE.match(s.strip())
+    if not m:
+        return None
+    y, mo, d, h, mi, sec, tz = m.groups()
+    try:
+        dt = datetime(
+            int(y),
+            int(mo or 1),
+            int(d or 1),
+            int(h or 0),
+            int(mi or 0),
+            int(sec or 0),
+        )
+        if tz:
+            sign = 1 if tz[0] == "+" else -1
+            offset = timedelta(hours=int(tz[1:3]), minutes=int(tz[3:5]))
+            dt = dt.replace(tzinfo=timezone(sign * offset))
+        return dt
     except ValueError:
         return None
 
@@ -85,7 +129,7 @@ def _extract_msh(seg: HL7Segment) -> dict:
         "sending_facility": _v(seg.get_component(4, 1)),       # MSH-4.1
         "receiving_application": _v(seg.get_component(5, 1)),  # MSH-5.1
         "receiving_facility": _v(seg.get_component(6, 1)),     # MSH-6.1
-        "message_datetime": _v(seg.get_field(7)),              # MSH-7
+        "message_datetime": _parse_dtm(seg.get_field(7)),         # MSH-7
         "security": _v(seg.get_field(8)),                      # MSH-8
         "message_code": _v(seg.get_component(9, 1)),           # MSH-9.1 e.g. "ADT"
         "trigger_event": _v(seg.get_component(9, 2)),          # MSH-9.2 e.g. "A01"
@@ -127,7 +171,7 @@ def _extract_pid(seg: HL7Segment) -> dict:
         "patient_name_suffix": _v(seg.get_rep_component(5, 1, 5)),       # PID-5.5
         "patient_name_prefix": _v(seg.get_rep_component(5, 1, 6)),       # PID-5.6
         "mothers_maiden_name": _v(seg.get_rep_component(6, 1, 1)),       # PID-6.1
-        "date_of_birth": _v(seg.get_field(7)),                           # PID-7
+        "date_of_birth": _parse_dtm(seg.get_field(7)),                    # PID-7
         "administrative_sex": _v(seg.get_field(8)),                      # PID-8
         "patient_alias": _v(seg.get_first_repetition(9)),                # PID-9
         "race": _v(seg.get_rep_component(10, 1, 1)),                     # PID-10.1
@@ -156,11 +200,11 @@ def _extract_pid(seg: HL7Segment) -> dict:
         "citizenship": _v(seg.get_rep_component(26, 1, 1)),              # PID-26.1
         "veterans_military_status": _v(seg.get_component(27, 1)),        # PID-27.1
         "nationality": _v(seg.get_component(28, 1)),                     # PID-28.1
-        "patient_death_datetime": _v(seg.get_field(29)),                 # PID-29
+        "patient_death_datetime": _parse_dtm(seg.get_field(29)),          # PID-29
         "patient_death_indicator": _v(seg.get_field(30)),                # PID-30
         "identity_unknown_indicator": _v(seg.get_field(31)),             # PID-31
         "identity_reliability_code": _v(seg.get_first_repetition(32)),  # PID-32
-        "last_update_datetime": _v(seg.get_field(33)),                   # PID-33
+        "last_update_datetime": _parse_dtm(seg.get_field(33)),            # PID-33
         "last_update_facility": _v(seg.get_component(34, 1)),            # PID-34.1
         "species_code": _v(seg.get_component(35, 1)),                    # PID-35.1
         "breed_code": _v(seg.get_component(36, 1)),                      # PID-36.1
@@ -232,8 +276,8 @@ def _extract_pv1(seg: HL7Segment) -> dict:
         "account_status": _v(seg.get_field(41)),                         # PV1-41
         "pending_location": _v(seg.get_field(42)),                       # PV1-42
         "prior_temporary_location": _v(seg.get_field(43)),               # PV1-43
-        "admit_datetime": _v(seg.get_first_repetition(44)),              # PV1-44
-        "discharge_datetime": _v(seg.get_first_repetition(45)),          # PV1-45
+        "admit_datetime": _parse_dtm(seg.get_first_repetition(44)),       # PV1-44
+        "discharge_datetime": _parse_dtm(seg.get_first_repetition(45)), # PV1-45
         "current_patient_balance": _v(seg.get_field(46)),                # PV1-46
         "total_charges": _v(seg.get_field(47)),                          # PV1-47
         "total_adjustments": _v(seg.get_field(48)),                      # PV1-48
@@ -246,7 +290,7 @@ def _extract_pv1(seg: HL7Segment) -> dict:
 
 def _extract_obr(seg: HL7Segment) -> dict:
     return {
-        "set_id": _i(seg.get_field(1)),                                  # OBR-1
+        "set_id": _i(seg.get_field(1)) or 1,                             # OBR-1 (NOT NULL PK; default 1)
         "placer_order_number": _v(seg.get_component(2, 1)),              # OBR-2.1
         "filler_order_number": _v(seg.get_component(3, 1)),              # OBR-3.1
         "universal_service_identifier": _v(seg.get_field(4)),            # OBR-4 raw
@@ -254,15 +298,15 @@ def _extract_obr(seg: HL7Segment) -> dict:
         "service_text": _v(seg.get_component(4, 2)),                     # OBR-4.2
         "service_coding_system": _v(seg.get_component(4, 3)),            # OBR-4.3
         "priority": _v(seg.get_field(5)),                                # OBR-5
-        "requested_datetime": _v(seg.get_field(6)),                      # OBR-6
-        "observation_datetime": _v(seg.get_field(7)),                    # OBR-7
-        "observation_end_datetime": _v(seg.get_field(8)),                # OBR-8
+        "requested_datetime": _parse_dtm(seg.get_field(6)),               # OBR-6
+        "observation_datetime": _parse_dtm(seg.get_field(7)),            # OBR-7
+        "observation_end_datetime": _parse_dtm(seg.get_field(8)),        # OBR-8
         "collection_volume": _v(seg.get_component(9, 1)),                # OBR-9.1
         "collector_identifier": _v(seg.get_rep_component(10, 1, 1)),     # OBR-10.1
         "specimen_action_code": _v(seg.get_field(11)),                   # OBR-11
         "danger_code": _v(seg.get_component(12, 1)),                     # OBR-12.1
         "relevant_clinical_information": _v(seg.get_field(13)),          # OBR-13
-        "specimen_received_datetime": _v(seg.get_field(14)),             # OBR-14
+        "specimen_received_datetime": _parse_dtm(seg.get_field(14)),      # OBR-14
         "specimen_source": _v(seg.get_field(15)),                        # OBR-15
         "ordering_provider": _v(seg.get_first_repetition(16)),           # OBR-16 raw
         "ordering_provider_id": _v(seg.get_rep_component(16, 1, 1)),     # OBR-16.1
@@ -273,7 +317,7 @@ def _extract_obr(seg: HL7Segment) -> dict:
         "placer_field_2": _v(seg.get_field(19)),                         # OBR-19
         "filler_field_1": _v(seg.get_field(20)),                         # OBR-20
         "filler_field_2": _v(seg.get_field(21)),                         # OBR-21
-        "results_rpt_status_chng_datetime": _v(seg.get_field(22)),       # OBR-22
+        "results_rpt_status_chng_datetime": _parse_dtm(seg.get_field(22)), # OBR-22
         "charge_to_practice": _v(seg.get_field(23)),                     # OBR-23
         "diagnostic_service_section_id": _v(seg.get_field(24)),          # OBR-24
         "result_status": _v(seg.get_field(25)),                          # OBR-25
@@ -287,7 +331,7 @@ def _extract_obr(seg: HL7Segment) -> dict:
         "assistant_result_interpreter": _v(seg.get_rep_component(33, 1, 1)),  # OBR-33.1
         "technician": _v(seg.get_rep_component(34, 1, 1)),               # OBR-34.1
         "transcriptionist": _v(seg.get_rep_component(35, 1, 1)),         # OBR-35.1
-        "scheduled_datetime": _v(seg.get_field(36)),                     # OBR-36
+        "scheduled_datetime": _parse_dtm(seg.get_field(36)),              # OBR-36
         "number_of_sample_containers": _i(seg.get_field(37)),            # OBR-37
         "transport_logistics": _v(seg.get_rep_component(38, 1, 1)),      # OBR-38.1
         "collectors_comment": _v(seg.get_rep_component(39, 1, 1)),       # OBR-39.1
@@ -307,7 +351,7 @@ def _extract_obr(seg: HL7Segment) -> dict:
 
 def _extract_obx(seg: HL7Segment) -> dict:
     return {
-        "set_id": _i(seg.get_field(1)),                                  # OBX-1
+        "set_id": _i(seg.get_field(1)) or 1,                             # OBX-1 (NOT NULL PK; default 1)
         "value_type": _v(seg.get_field(2)),                              # OBX-2 (NM/ST/TX/CWE…)
         "observation_identifier": _v(seg.get_field(3)),                  # OBX-3 raw
         "observation_id": _v(seg.get_component(3, 1)),                   # OBX-3.1 (LOINC)
@@ -327,14 +371,14 @@ def _extract_obx(seg: HL7Segment) -> dict:
         "probability": _v(seg.get_field(9)),                             # OBX-9
         "nature_of_abnormal_test": _v(seg.get_first_repetition(10)),     # OBX-10
         "observation_result_status": _v(seg.get_field(11)),              # OBX-11 (F/P/C…)
-        "effective_date_of_ref_range": _v(seg.get_field(12)),            # OBX-12
+        "effective_date_of_ref_range": _parse_dtm(seg.get_field(12)),     # OBX-12
         "user_defined_access_checks": _v(seg.get_field(13)),             # OBX-13
-        "datetime_of_observation": _v(seg.get_field(14)),                # OBX-14
+        "datetime_of_observation": _parse_dtm(seg.get_field(14)),         # OBX-14
         "producers_id": _v(seg.get_component(15, 1)),                    # OBX-15.1
         "responsible_observer": _v(seg.get_rep_component(16, 1, 1)),     # OBX-16.1
         "observation_method": _v(seg.get_rep_component(17, 1, 1)),       # OBX-17.1
         "equipment_instance_identifier": _v(seg.get_rep_component(18, 1, 1)),  # OBX-18.1
-        "datetime_of_analysis": _v(seg.get_field(19)),                   # OBX-19
+        "datetime_of_analysis": _parse_dtm(seg.get_field(19)),            # OBX-19
         "observation_site": _v(seg.get_rep_component(20, 1, 1)),         # OBX-20.1
         "observation_instance_identifier": _v(seg.get_component(21, 1)), # OBX-21.1
         "mood_code": _v(seg.get_component(22, 1)),                       # OBX-22.1
@@ -349,7 +393,7 @@ def _extract_obx(seg: HL7Segment) -> dict:
 
 def _extract_al1(seg: HL7Segment) -> dict:
     return {
-        "set_id": _i(seg.get_field(1)),                                  # AL1-1
+        "set_id": _i(seg.get_field(1)) or 1,                             # AL1-1 (NOT NULL PK; default 1)
         "allergen_type_code": _v(seg.get_component(2, 1)),               # AL1-2.1
         "allergen_code": _v(seg.get_field(3)),                           # AL1-3 raw
         "allergen_id": _v(seg.get_component(3, 1)),                      # AL1-3.1
@@ -357,20 +401,20 @@ def _extract_al1(seg: HL7Segment) -> dict:
         "allergen_coding_system": _v(seg.get_component(3, 3)),           # AL1-3.3
         "allergy_severity_code": _v(seg.get_component(4, 1)),            # AL1-4.1
         "allergy_reaction_code": _v(seg.get_first_repetition(5)),        # AL1-5
-        "identification_date": _v(seg.get_field(6)),                     # AL1-6
+        "identification_date": _parse_dtm(seg.get_field(6)),              # AL1-6
     }
 
 
 def _extract_dg1(seg: HL7Segment) -> dict:
     return {
-        "set_id": _i(seg.get_field(1)),                                  # DG1-1
+        "set_id": _i(seg.get_field(1)) or 1,                             # DG1-1 (NOT NULL PK; default 1)
         "diagnosis_coding_method": _v(seg.get_field(2)),                 # DG1-2
         "diagnosis_code": _v(seg.get_field(3)),                          # DG1-3 raw
         "diagnosis_id": _v(seg.get_component(3, 1)),                     # DG1-3.1
         "diagnosis_text": _v(seg.get_component(3, 2)),                   # DG1-3.2
         "diagnosis_coding_system": _v(seg.get_component(3, 3)),          # DG1-3.3
         "diagnosis_description": _v(seg.get_field(4)),                   # DG1-4
-        "diagnosis_datetime": _v(seg.get_field(5)),                      # DG1-5
+        "diagnosis_datetime": _parse_dtm(seg.get_field(5)),               # DG1-5
         "diagnosis_type": _v(seg.get_field(6)),                          # DG1-6
         "major_diagnostic_category": _v(seg.get_component(7, 1)),        # DG1-7.1
         "diagnostic_related_group": _v(seg.get_component(8, 1)),         # DG1-8.1
@@ -384,7 +428,7 @@ def _extract_dg1(seg: HL7Segment) -> dict:
         "diagnosing_clinician": _v(seg.get_rep_component(16, 1, 1)),     # DG1-16.1
         "diagnosis_classification": _v(seg.get_field(17)),               # DG1-17
         "confidential_indicator": _v(seg.get_field(18)),                 # DG1-18
-        "attestation_datetime": _v(seg.get_field(19)),                   # DG1-19
+        "attestation_datetime": _parse_dtm(seg.get_field(19)),            # DG1-19
         "diagnosis_identifier": _v(seg.get_component(20, 1)),            # DG1-20.1
         "diagnosis_action_code": _v(seg.get_field(21)),                  # DG1-21
         "parent_diagnosis": _v(seg.get_component(22, 1)),                # DG1-22.1
@@ -397,7 +441,7 @@ def _extract_dg1(seg: HL7Segment) -> dict:
 
 def _extract_nk1(seg: HL7Segment) -> dict:
     return {
-        "set_id": _i(seg.get_field(1)),                                  # NK1-1
+        "set_id": _i(seg.get_field(1)) or 1,                             # NK1-1 (NOT NULL PK; default 1)
         "name": _v(seg.get_first_repetition(2)),                         # NK1-2 raw
         "nk_family_name": _v(seg.get_rep_component(2, 1, 1)),            # NK1-2.1
         "nk_given_name": _v(seg.get_rep_component(2, 1, 2)),             # NK1-2.2
@@ -409,15 +453,15 @@ def _extract_nk1(seg: HL7Segment) -> dict:
         "phone_number": _v(seg.get_first_repetition(5)),                 # NK1-5
         "business_phone": _v(seg.get_first_repetition(6)),               # NK1-6
         "contact_role": _v(seg.get_component(7, 1)),                     # NK1-7.1
-        "start_date": _v(seg.get_field(8)),                              # NK1-8
-        "end_date": _v(seg.get_field(9)),                                # NK1-9
+        "start_date": _parse_dtm(seg.get_field(8)),                       # NK1-8
+        "end_date": _parse_dtm(seg.get_field(9)),                        # NK1-9
         "job_title": _v(seg.get_field(10)),                              # NK1-10
         "job_code": _v(seg.get_component(11, 1)),                        # NK1-11.1
         "employee_number": _v(seg.get_component(12, 1)),                 # NK1-12.1
         "organization_name": _v(seg.get_rep_component(13, 1, 1)),        # NK1-13.1
         "marital_status": _v(seg.get_component(14, 1)),                  # NK1-14.1
         "administrative_sex": _v(seg.get_field(15)),                     # NK1-15
-        "date_of_birth": _v(seg.get_field(16)),                          # NK1-16
+        "date_of_birth": _parse_dtm(seg.get_field(16)),                   # NK1-16
         "living_dependency": _v(seg.get_rep_component(17, 1, 1)),        # NK1-17.1
         "ambulatory_status": _v(seg.get_rep_component(18, 1, 1)),        # NK1-18.1
         "citizenship": _v(seg.get_rep_component(19, 1, 1)),              # NK1-19.1
@@ -447,11 +491,11 @@ def _extract_nk1(seg: HL7Segment) -> dict:
 def _extract_evn(seg: HL7Segment) -> dict:
     return {
         "event_type_code": _v(seg.get_field(1)),                         # EVN-1
-        "recorded_datetime": _v(seg.get_field(2)),                       # EVN-2
-        "date_time_planned_event": _v(seg.get_field(3)),                 # EVN-3
+        "recorded_datetime": _parse_dtm(seg.get_field(2)),                # EVN-2
+        "date_time_planned_event": _parse_dtm(seg.get_field(3)),         # EVN-3
         "event_reason_code": _v(seg.get_component(4, 1)),                # EVN-4.1
         "operator_id": _v(seg.get_rep_component(5, 1, 1)),               # EVN-5.1
-        "event_occurred": _v(seg.get_field(6)),                          # EVN-6
+        "event_occurred": _parse_dtm(seg.get_field(6)),                   # EVN-6
         "event_facility": _v(seg.get_component(7, 1)),                   # EVN-7.1
     }
 
@@ -557,7 +601,16 @@ class HL7LakeflowConnect(LakeflowConnect):
 
     def read_table_metadata(self, table_name: str, table_options: dict[str, str]) -> dict:
         self._validate_table(table_name, table_options)
-        return {"ingestion_type": "append"}
+        segment_type = table_options.get("segment_type", table_name).lower()
+        # Single-segment tables have one row per message → PK is message_id alone.
+        # Repeating-segment tables (multiple OBX, OBR, etc.) need set_id too.
+        is_single = segment_type in _SINGLE_SEGMENT_TABLES
+        return {
+            "ingestion_type": "cdc",
+            "cursor_field": "message_timestamp",
+            "primary_keys": ["message_id"] if is_single else ["message_id", "set_id"],
+            "description": TABLE_DESCRIPTIONS.get(segment_type, ""),
+        }
 
     def read_table(
         self, table_name: str, start_offset: dict, table_options: dict[str, str]
@@ -653,10 +706,10 @@ class HL7LakeflowConnect(LakeflowConnect):
 
             if segment_type == "MSH":
                 if msh is not None:
-                    records.append(meta | _extract_msh(msh))
+                    records.append(meta | _extract_msh(msh) | {"raw_segment": msh.raw_line})
             else:
                 extractor = _EXTRACTORS.get(segment_type.lower(), _extract_generic)
                 for seg in msg.get_segments(segment_type):
-                    records.append(meta | extractor(seg))
+                    records.append(meta | extractor(seg) | {"raw_segment": seg.raw_line})
 
         return records
