@@ -73,15 +73,64 @@ TABLE_DESCRIPTIONS: dict[str, str] = {
         "(sending/receiving application and facility), message type, trigger event, "
         "timestamp, and HL7 version. One row per message."
     ),
+    "evn": (
+        "Event Type — trigger event metadata. Contains the event type code, the date/time "
+        "the event was recorded, the date/time it occurred, the event reason, and the "
+        "operator who initiated the event. One row per message."
+    ),
     "pid": (
         "Patient Identification — core patient demographics. Contains name, date of birth, "
         "sex, medical record number (MRN), address, phone numbers, and insurance account number. "
+        "One row per message."
+    ),
+    "pd1": (
+        "Patient Additional Demographic — supplementary patient data including living will, "
+        "organ donor status, primary care facility, student indicator, and military information. "
         "One row per message."
     ),
     "pv1": (
         "Patient Visit — encounter details. Contains patient class (inpatient/outpatient), "
         "bed location, attending and admitting physician, admit source, discharge disposition, "
         "and admit/discharge timestamps. One row per message."
+    ),
+    "pv2": (
+        "Patient Visit Additional — extended visit details including admit reason, expected "
+        "dates (admit/discharge/surgery), mode of arrival, patient condition, and visit priority. "
+        "One row per message."
+    ),
+    "nk1": (
+        "Next of Kin / Associated Parties — emergency contact or guarantor. Contains "
+        "contact name, relationship to patient, address, phone number, and contact role. "
+        "One row per associated party."
+    ),
+    "mrg": (
+        "Merge Patient Information — prior patient identifiers used in merge/link/unlink events. "
+        "Contains prior MRN, account number, visit number, and patient name. One row per message."
+    ),
+    "al1": (
+        "Patient Allergy — allergy or adverse reaction record. Contains allergen code and "
+        "description, allergy type (drug/food/environmental), reaction, severity, and "
+        "identification date. One row per allergy."
+    ),
+    "iam": (
+        "Patient Adverse Reaction Information — action-code based allergy tracking (newer "
+        "replacement for AL1). Contains allergen, severity, reaction, action code (add/delete/update), "
+        "unique identifier, and clinical status. One row per adverse reaction."
+    ),
+    "dg1": (
+        "Diagnosis — ICD or SNOMED diagnosis with type (A=admitting, W=working, F=final) "
+        "and optional DRG grouping details. Multiple DG1 rows per encounter are common. "
+        "One row per diagnosis."
+    ),
+    "pr1": (
+        "Procedures — surgical, diagnostic, and therapeutic procedures. Contains procedure code "
+        "(CPT/ICD), date/time, duration, anesthesia details, and associated diagnosis. "
+        "One row per procedure."
+    ),
+    "orc": (
+        "Common Order — order control and status information. Contains order control code "
+        "(new/cancel/change), placer and filler order numbers, ordering provider, order status, "
+        "and transaction date/time. One row per order."
     ),
     "obr": (
         "Observation Request — lab or radiology order. Contains the ordered test "
@@ -93,25 +142,44 @@ TABLE_DESCRIPTIONS: dict[str, str] = {
         "vital sign, or coded observation including value, units, reference range, and "
         "abnormal flag. Multiple OBX rows per OBR (one per result component)."
     ),
-    "al1": (
-        "Patient Allergy — allergy or adverse reaction record. Contains allergen code and "
-        "description, allergy type (drug/food/environmental), reaction, severity, and "
-        "identification date. One row per allergy."
+    "nte": (
+        "Notes and Comments — free-text annotations attached to orders, results, or other "
+        "segments. Contains the comment source, text content, and type. One row per comment."
     ),
-    "dg1": (
-        "Diagnosis — ICD or SNOMED diagnosis with type (A=admitting, W=working, F=final) "
-        "and optional DRG grouping details. Multiple DG1 rows per encounter are common. "
-        "One row per diagnosis."
+    "spm": (
+        "Specimen — specimen type, collection details, handling instructions, and condition. "
+        "Contains specimen identifier, type, source site, collection method, and date/time. "
+        "One row per specimen."
     ),
-    "nk1": (
-        "Next of Kin / Associated Parties — emergency contact or guarantor. Contains "
-        "contact name, relationship to patient, address, phone number, and contact role. "
-        "One row per associated party."
+    "in1": (
+        "Insurance — policy coverage and billing information. Contains insurance plan, company "
+        "name and ID, group number, policy number, insured person details, and plan effective "
+        "dates. One row per insurance plan."
     ),
-    "evn": (
-        "Event Type — trigger event metadata. Contains the event type code, the date/time "
-        "the event was recorded, the date/time it occurred, the event reason, and the "
-        "operator who initiated the event. One row per message."
+    "gt1": (
+        "Guarantor — financially responsible party. Contains guarantor name, address, phone, "
+        "relationship to patient, employer information, and financial class. "
+        "One row per guarantor."
+    ),
+    "ft1": (
+        "Financial Transaction — charges, payments, and adjustments. Contains transaction "
+        "type (charge/credit/payment), code, amount, date, performing provider, and associated "
+        "diagnosis and procedure codes. One row per transaction."
+    ),
+    "rxa": (
+        "Pharmacy/Treatment Administration — medication administration records. Contains "
+        "drug/vaccine code, amount, units, administration date/time, provider, lot number, "
+        "and completion status. One row per administration."
+    ),
+    "sch": (
+        "Scheduling Activity Information — appointment details. Contains placer and filler "
+        "appointment IDs, event reason, appointment type, duration, and contact information "
+        "for placer and filler. One row per scheduling message."
+    ),
+    "txa": (
+        "Transcription Document Header — document metadata and status. Contains document type, "
+        "unique document number, completion status (dictated/authenticated), originator, "
+        "transcriptionist, and authentication details. One row per document message."
     ),
 }
 
@@ -540,6 +608,571 @@ EVN_SCHEMA = StructType(
 )
 
 # ---------------------------------------------------------------------------
+# PD1 — Patient Additional Demographic
+# ---------------------------------------------------------------------------
+
+PD1_SCHEMA = StructType(
+    _METADATA_FIELDS
+    + [
+        _s("living_dependency",                        "Living dependency code (PD1-1): S=Spouse, M=Medical Supervision, C=Small Children"),
+        _s("living_arrangement",                       "Living arrangement code (PD1-2): A=Alone, F=Family, I=Institution, R=Relative, U=Unknown"),
+        _s("patient_primary_facility",                 "Primary care facility name (PD1-3.1)"),
+        _s("patient_primary_care_provider",            "Primary care provider identifier (PD1-4.1, deprecated)"),
+        _s("student_indicator",                        "Student status (PD1-5): F=Full-time, P=Part-time, N=Not a student"),
+        _s("handicap",                                 "Handicap code (PD1-6)"),
+        _s("living_will_code",                         "Living will status (PD1-7): Y=Yes, F=Filed with patient, N=No"),
+        _s("organ_donor_code",                         "Organ donor status (PD1-8): Y=Yes, F=Filed with patient, N=No"),
+        _s("separate_bill",                            "Separate billing flag Y/N (PD1-9)"),
+        _s("duplicate_patient",                        "Duplicate patient identifiers (PD1-10.1)"),
+        _s("publicity_code",                           "Publicity/directory listing code (PD1-11.1)"),
+        _s("protection_indicator",                     "Protection indicator Y/N (PD1-12); if Y, patient info is restricted"),
+        _s("protection_indicator_effective_date",      "Date the protection indicator became effective (PD1-13)"),
+        _s("place_of_worship",                         "Place of worship organization name (PD1-14.1)"),
+        _s("advance_directive_code",                   "Advance directive code (PD1-15.1): DNR=Do Not Resuscitate"),
+        _s("immunization_registry_status",             "Immunization registry status (PD1-16): A=Active, I=Inactive, P=Protected"),
+        _s("immunization_registry_status_effective_date", "Immunization registry status effective date (PD1-17)"),
+        _s("publicity_code_effective_date",            "Publicity code effective date (PD1-18)"),
+        _s("military_branch",                          "Military branch (PD1-19): USA=Army, USN=Navy, USAF=Air Force, USMC=Marines"),
+        _s("military_rank_grade",                      "Military rank or grade (PD1-20)"),
+        _s("military_status",                          "Military status (PD1-21): ACT=Active duty, RET=Retired, DEC=Deceased"),
+    ]
+)
+
+# ---------------------------------------------------------------------------
+# PV2 — Patient Visit Additional Information
+# ---------------------------------------------------------------------------
+
+PV2_SCHEMA = StructType(
+    _METADATA_FIELDS
+    + [
+        _s("prior_pending_location",                   "Prior pending transfer location (PV2-1)"),
+        _s("accommodation_code",                       "Accommodation code (PV2-2.1)"),
+        _s("admit_reason",                             "Reason for admission (PV2-3.1)"),
+        _s("transfer_reason",                          "Reason for transfer (PV2-4.1)"),
+        _s("patient_valuables",                        "Patient's valuable items description (PV2-5)"),
+        _s("patient_valuables_location",               "Location of patient's valuables (PV2-6)"),
+        _s("visit_user_code",                          "Visit user code (PV2-7)"),
+        _ts("expected_admit_datetime",                 "Expected admission date/time (PV2-8)"),
+        _ts("expected_discharge_datetime",             "Expected discharge date/time (PV2-9)"),
+        _i("estimated_length_of_inpatient_stay",       "Estimated length of inpatient stay in days (PV2-10)"),
+        _i("actual_length_of_inpatient_stay",          "Actual length of inpatient stay in days (PV2-11)"),
+        _s("visit_description",                        "Free-text visit description (PV2-12)"),
+        _s("referral_source_code",                     "Referral source identifier (PV2-13.1)"),
+        _s("previous_service_date",                    "Date of previous service (PV2-14)"),
+        _s("employment_illness_related_indicator",     "Employment illness related Y/N (PV2-15)"),
+        _s("purge_status_code",                        "Purge status code (PV2-16)"),
+        _s("purge_status_date",                        "Purge status date (PV2-17)"),
+        _s("special_program_code",                     "Special program code (PV2-18)"),
+        _s("retention_indicator",                      "Retention indicator Y/N (PV2-19)"),
+        _i("expected_number_of_insurance_plans",       "Expected number of insurance plans (PV2-20)"),
+        _s("visit_publicity_code",                     "Visit publicity code (PV2-21)"),
+        _s("visit_protection_indicator",               "Visit protection indicator Y/N (PV2-22)"),
+        _s("clinic_organization_name",                 "Clinic organization name (PV2-23.1)"),
+        _s("patient_status_code",                      "Patient status code (PV2-24)"),
+        _s("visit_priority_code",                      "Visit priority code (PV2-25)"),
+        _s("previous_treatment_date",                  "Previous treatment date (PV2-26)"),
+        _s("expected_discharge_disposition",            "Expected discharge disposition (PV2-27)"),
+        _s("signature_on_file_date",                   "Signature on file date (PV2-28)"),
+        _s("first_similar_illness_date",               "Date of first similar illness (PV2-29)"),
+        _s("patient_charge_adjustment_code",           "Patient charge adjustment code (PV2-30.1)"),
+        _s("recurring_service_code",                   "Recurring service code (PV2-31)"),
+        _s("billing_media_code",                       "Billing media code Y/N (PV2-32)"),
+        _ts("expected_surgery_datetime",               "Expected surgery date/time (PV2-33)"),
+        _s("military_partnership_code",                "Military partnership code Y/N (PV2-34)"),
+        _s("military_non_availability_code",           "Military non-availability code Y/N (PV2-35)"),
+        _s("newborn_baby_indicator",                   "Newborn baby indicator Y/N (PV2-36)"),
+        _s("baby_detained_indicator",                  "Baby detained indicator Y/N (PV2-37)"),
+        _s("mode_of_arrival_code",                     "Mode of arrival code (PV2-38.1): A=Ambulance, C=Car, F=On foot, H=Helicopter"),
+        _s("recreational_drug_use_code",               "Recreational drug use code (PV2-39.1)"),
+        _s("admission_level_of_care_code",             "Admission level of care code (PV2-40.1)"),
+        _s("precaution_code",                          "Precaution code (PV2-41.1)"),
+        _s("patient_condition_code",                   "Patient condition code (PV2-42.1)"),
+        _s("living_will_code_pv2",                     "Living will code (PV2-43); same values as PD1-7"),
+        _s("organ_donor_code_pv2",                     "Organ donor code (PV2-44); same values as PD1-8"),
+        _s("advance_directive_code_pv2",               "Advance directive code (PV2-45.1)"),
+        _s("patient_status_effective_date",            "Patient status effective date (PV2-46)"),
+        _ts("expected_loa_return_datetime",            "Expected leave of absence return date/time (PV2-47)"),
+        _ts("expected_preadmission_testing_datetime",  "Expected pre-admission testing date/time (PV2-48)"),
+        _s("notify_clergy_code",                       "Notify clergy code (PV2-49)"),
+    ]
+)
+
+# ---------------------------------------------------------------------------
+# MRG — Merge Patient Information
+# ---------------------------------------------------------------------------
+
+MRG_SCHEMA = StructType(
+    _METADATA_FIELDS
+    + [
+        _s("prior_patient_identifier_list",   "Prior patient identifier list raw (MRG-1)"),
+        _s("prior_patient_id_value",          "Prior patient ID value (MRG-1.1)"),
+        _s("prior_alternate_patient_id",      "Prior alternate patient ID (MRG-2, deprecated)"),
+        _s("prior_patient_account_number",    "Prior patient account number (MRG-3.1)"),
+        _s("prior_patient_id",                "Prior patient ID (MRG-4.1, deprecated)"),
+        _s("prior_visit_number",              "Prior visit number (MRG-5.1)"),
+        _s("prior_alternate_visit_id",        "Prior alternate visit ID (MRG-6.1)"),
+        _s("prior_patient_name",              "Prior patient name raw (MRG-7)"),
+        _s("prior_patient_family_name",       "Prior patient family name (MRG-7.1)"),
+        _s("prior_patient_given_name",        "Prior patient given name (MRG-7.2)"),
+    ]
+)
+
+# ---------------------------------------------------------------------------
+# IAM — Patient Adverse Reaction Information
+# ---------------------------------------------------------------------------
+
+IAM_SCHEMA = StructType(
+    _METADATA_FIELDS
+    + [
+        _pk_i("set_id",                          "Sequence number for this IAM segment within the message (IAM-1)"),
+        _s("allergen_type_code",                  "Allergen type (IAM-2.1): DA=Drug, FA=Food, EA=Environmental, MA=Miscellaneous"),
+        _s("allergen_code",                       "Allergen code/mnemonic/description raw (IAM-3)"),
+        _s("allergen_id",                         "Allergen identifier code (IAM-3.1)"),
+        _s("allergen_text",                       "Allergen display text (IAM-3.2)"),
+        _s("allergen_coding_system",              "Allergen coding system (IAM-3.3)"),
+        _s("allergy_severity_code",               "Allergy severity (IAM-4.1): SV=Severe, MO=Moderate, MI=Mild, U=Unknown"),
+        _s("allergy_reaction_code",               "Allergy reaction description (IAM-5)"),
+        _s("allergy_action_code",                 "Action code (IAM-6.1): A=Add, D=Delete, U=Update"),
+        _s("allergy_unique_identifier",           "Unique allergy identifier (IAM-7.1)"),
+        _s("action_reason",                       "Reason for the action (IAM-8)"),
+        _s("sensitivity_to_causative_agent_code", "Sensitivity code (IAM-9.1)"),
+        _s("allergen_group_code",                 "Allergen group code (IAM-10.1)"),
+        _s("allergen_group_text",                 "Allergen group text (IAM-10.2)"),
+        _s("onset_date",                          "Allergy onset date (IAM-11)"),
+        _s("onset_date_text",                     "Free-text onset date description (IAM-12)"),
+        _ts("reported_datetime",                  "When the allergy was reported (IAM-13)"),
+        _s("reported_by",                         "Person who reported the allergy raw (IAM-14)"),
+        _s("reported_by_family_name",             "Reporter family name (IAM-14.1)"),
+        _s("reported_by_given_name",              "Reporter given name (IAM-14.2)"),
+        _s("relationship_to_patient_code",        "Reporter's relationship to patient (IAM-15.1)"),
+        _s("alert_device_code",                   "Alert device code (IAM-16.1)"),
+        _s("allergy_clinical_status_code",        "Clinical status (IAM-17.1): A=Active, I=Inactive, R=Resolved"),
+        _s("statused_by_person",                  "Person who set the status (IAM-18.1)"),
+        _s("statused_by_organization",            "Organization that set the status (IAM-19.1)"),
+        _ts("statused_at_datetime",               "Date/time status was set (IAM-20)"),
+    ]
+)
+
+# ---------------------------------------------------------------------------
+# PR1 — Procedures
+# ---------------------------------------------------------------------------
+
+PR1_SCHEMA = StructType(
+    _METADATA_FIELDS
+    + [
+        _pk_i("set_id",                    "Sequence number for this PR1 segment within the message (PR1-1)"),
+        _s("procedure_coding_method",      "Procedure coding method (PR1-2, deprecated)"),
+        _s("procedure_code",               "Procedure code raw (PR1-3)"),
+        _s("procedure_id",                 "CPT/ICD procedure code (PR1-3.1)"),
+        _s("procedure_text",               "Procedure display text (PR1-3.2)"),
+        _s("procedure_coding_system",      "Procedure coding system (PR1-3.3)"),
+        _s("procedure_description",        "Procedure description (PR1-4, deprecated)"),
+        _ts("procedure_datetime",          "When the procedure was performed (PR1-5)"),
+        _s("procedure_functional_type",    "Functional type (PR1-6): A=Anesthesia, P=Procedure, I=Invasion"),
+        _i("procedure_minutes",            "Duration of the procedure in minutes (PR1-7)"),
+        _s("anesthesiologist",             "Anesthesiologist identifier (PR1-8.1, deprecated)"),
+        _s("anesthesia_code",              "Anesthesia code (PR1-9)"),
+        _i("anesthesia_minutes",           "Anesthesia duration in minutes (PR1-10)"),
+        _s("surgeon",                      "Surgeon identifier (PR1-11.1, deprecated)"),
+        _s("procedure_practitioner",       "Procedure practitioner identifier (PR1-12.1, deprecated)"),
+        _s("consent_code",                 "Consent code (PR1-13.1)"),
+        _s("procedure_priority",           "Procedure priority (PR1-14)"),
+        _s("associated_diagnosis_code",    "Associated diagnosis code (PR1-15.1)"),
+        _s("procedure_code_modifier",      "Procedure modifier code (PR1-16.1)"),
+        _s("procedure_drg_type",           "DRG type (PR1-17)"),
+        _s("tissue_type_code",             "Tissue type code (PR1-18.1)"),
+        _s("procedure_identifier",         "Unique procedure identifier (PR1-19.1)"),
+        _s("procedure_action_code",        "Action code (PR1-20): A=Add, D=Delete, U=Update"),
+    ]
+)
+
+# ---------------------------------------------------------------------------
+# ORC — Common Order
+# ---------------------------------------------------------------------------
+
+ORC_SCHEMA = StructType(
+    _METADATA_FIELDS
+    + [
+        _pk_i("set_id",                               "Synthetic sequence number for multiple ORC segments per message"),
+        _s("order_control",                            "Order control code (ORC-1): NW=New, CA=Cancel, DC=Discontinue, XO=Change, SC=Status"),
+        _s("placer_order_number",                      "Order number from the placer system (ORC-2.1)"),
+        _s("filler_order_number",                      "Order number from the filler system (ORC-3.1)"),
+        _s("placer_group_number",                      "Placer group number (ORC-4.1)"),
+        _s("order_status",                             "Order status (ORC-5): IP=In Process, CM=Completed, SC=Scheduled, CA=Cancelled"),
+        _s("response_flag",                            "Response flag (ORC-6): E=Report exceptions, R=Same as initiation, D=Deferred, N=Notification"),
+        _s("quantity_timing",                          "Quantity/timing (ORC-7, deprecated)"),
+        _s("parent_order",                             "Parent order reference (ORC-8)"),
+        _ts("datetime_of_transaction",                 "Transaction date/time (ORC-9)"),
+        _s("entered_by",                               "Person who entered the order (ORC-10.1)"),
+        _s("verified_by",                              "Person who verified the order (ORC-11.1)"),
+        _s("ordering_provider",                        "Ordering provider raw (ORC-12)"),
+        _s("ordering_provider_id",                     "Ordering provider identifier (ORC-12.1)"),
+        _s("ordering_provider_family_name",            "Ordering provider family name (ORC-12.2)"),
+        _s("ordering_provider_given_name",             "Ordering provider given name (ORC-12.3)"),
+        _s("enterers_location",                        "Location where order was entered (ORC-13)"),
+        _s("call_back_phone_number",                   "Callback phone number (ORC-14)"),
+        _ts("order_effective_datetime",                "Order effective date/time (ORC-15)"),
+        _s("order_control_code_reason",                "Reason for the order control action (ORC-16.1)"),
+        _s("entering_organization",                    "Organization that entered the order (ORC-17.1)"),
+        _s("entering_device",                          "Device used to enter the order (ORC-18.1)"),
+        _s("action_by",                                "Person who actioned the order (ORC-19.1)"),
+        _s("advanced_beneficiary_notice_code",         "ABN code (ORC-20.1)"),
+        _s("ordering_facility_name",                   "Ordering facility name (ORC-21.1)"),
+        _s("ordering_facility_address",                "Ordering facility address (ORC-22)"),
+        _s("ordering_facility_phone",                  "Ordering facility phone (ORC-23)"),
+        _s("ordering_provider_address",                "Ordering provider address (ORC-24)"),
+        _s("order_status_modifier",                    "Order status modifier (ORC-25.1)"),
+        _s("abn_override_reason",                      "ABN override reason (ORC-26.1)"),
+        _ts("fillers_expected_availability_datetime",  "Filler's expected availability date/time (ORC-27)"),
+        _s("confidentiality_code",                     "Confidentiality code (ORC-28.1)"),
+        _s("order_type",                               "Order type (ORC-29.1)"),
+        _s("enterer_authorization_mode",               "Enterer authorization mode (ORC-30.1)"),
+        _s("parent_universal_service_id",              "Parent universal service identifier (ORC-31.1)"),
+    ]
+)
+
+# ---------------------------------------------------------------------------
+# NTE — Notes and Comments
+# ---------------------------------------------------------------------------
+
+NTE_SCHEMA = StructType(
+    _METADATA_FIELDS
+    + [
+        _pk_i("set_id",            "Sequence number for this NTE segment within the message (NTE-1)"),
+        _s("source_of_comment",    "Source of comment (NTE-2): L=Ancillary/Filler, P=Orderer/Placer, O=Other"),
+        _s("comment",              "Free-text comment/note content (NTE-3); may contain formatted text"),
+        _s("comment_type",         "Comment type code (NTE-4.1)"),
+    ]
+)
+
+# ---------------------------------------------------------------------------
+# SPM — Specimen
+# ---------------------------------------------------------------------------
+
+SPM_SCHEMA = StructType(
+    _METADATA_FIELDS
+    + [
+        _pk_i("set_id",                      "Sequence number for this SPM segment within the message (SPM-1)"),
+        _s("specimen_id",                     "Specimen identifier (SPM-2.1)"),
+        _s("specimen_parent_ids",             "Parent specimen identifiers (SPM-3.1)"),
+        _s("specimen_type",                   "Specimen type raw (SPM-4)"),
+        _s("specimen_type_code",              "Specimen type code (SPM-4.1)"),
+        _s("specimen_type_text",              "Specimen type text (SPM-4.2)"),
+        _s("specimen_type_modifier",          "Specimen type modifier (SPM-5.1)"),
+        _s("specimen_additives",              "Specimen additives/preservatives (SPM-6.1)"),
+        _s("specimen_collection_method",      "Collection method (SPM-7.1)"),
+        _s("specimen_source_site",            "Source body site (SPM-8.1)"),
+        _s("specimen_source_site_modifier",   "Source site modifier (SPM-9.1)"),
+        _s("specimen_collection_site",        "Collection site (SPM-10.1)"),
+        _s("specimen_role",                   "Specimen role (SPM-11.1)"),
+        _s("specimen_collection_amount",      "Collection amount with units (SPM-12.1)"),
+        _i("grouped_specimen_count",          "Number of grouped specimens (SPM-13)"),
+        _s("specimen_description",            "Free-text specimen description (SPM-14)"),
+        _s("specimen_handling_code",          "Handling instructions code (SPM-15.1)"),
+        _s("specimen_risk_code",              "Risk code (SPM-16.1)"),
+        _s("specimen_collection_datetime",    "Specimen collection date/time range start (SPM-17.1)"),
+        _ts("specimen_received_datetime",     "When specimen was received (SPM-18)"),
+        _ts("specimen_expiration_datetime",   "Specimen expiration date/time (SPM-19)"),
+        _s("specimen_availability",           "Specimen availability Y/N (SPM-20)"),
+        _s("specimen_reject_reason",          "Reject reason code (SPM-21.1)"),
+        _s("specimen_quality",                "Quality assessment code (SPM-22.1)"),
+        _s("specimen_appropriateness",        "Appropriateness assessment code (SPM-23.1)"),
+        _s("specimen_condition",              "Specimen condition code (SPM-24.1)"),
+        _s("specimen_current_quantity",       "Current specimen quantity (SPM-25.1)"),
+        _i("number_of_specimen_containers",   "Number of specimen containers (SPM-26)"),
+        _s("container_type",                  "Container type (SPM-27.1)"),
+        _s("container_condition",             "Container condition (SPM-28.1)"),
+        _s("specimen_child_role",             "Specimen child role (SPM-29.1)"),
+    ]
+)
+
+# ---------------------------------------------------------------------------
+# IN1 — Insurance
+# ---------------------------------------------------------------------------
+
+IN1_SCHEMA = StructType(
+    _METADATA_FIELDS
+    + [
+        _pk_i("set_id",                       "Sequence number for this IN1 segment within the message (IN1-1)"),
+        _s("insurance_plan_id",                "Insurance plan identifier code (IN1-2.1)"),
+        _s("insurance_plan_text",              "Insurance plan display text (IN1-2.2)"),
+        _s("insurance_company_id",             "Insurance company identifier (IN1-3.1)"),
+        _s("insurance_company_name",           "Insurance company name (IN1-4.1)"),
+        _s("insurance_company_address",        "Insurance company address (IN1-5)"),
+        _s("insurance_co_contact_person",      "Contact person at insurance company (IN1-6.1)"),
+        _s("insurance_co_phone_number",        "Insurance company phone number (IN1-7)"),
+        _s("group_number",                     "Insurance group/policy group number (IN1-8)"),
+        _s("group_name",                       "Insurance group name (IN1-9.1)"),
+        _s("insureds_group_emp_id",            "Insured's group employer identifier (IN1-10.1)"),
+        _s("insureds_group_emp_name",          "Insured's group employer name (IN1-11.1)"),
+        _s("plan_effective_date",              "Plan effective date (IN1-12)"),
+        _s("plan_expiration_date",             "Plan expiration date (IN1-13)"),
+        _s("authorization_information",        "Authorization information (IN1-14.1)"),
+        _s("plan_type",                        "Plan type (IN1-15)"),
+        _s("name_of_insured",                  "Insured person's name raw (IN1-16)"),
+        _s("name_of_insured_family",           "Insured person's family name (IN1-16.1)"),
+        _s("name_of_insured_given",            "Insured person's given name (IN1-16.2)"),
+        _s("insureds_relationship_to_patient", "Relationship to patient code (IN1-17.1)"),
+        _ts("insureds_date_of_birth",          "Insured's date of birth (IN1-18)"),
+        _s("insureds_address",                 "Insured's address (IN1-19)"),
+        _s("assignment_of_benefits",           "Assignment of benefits (IN1-20)"),
+        _s("coordination_of_benefits",         "Coordination of benefits (IN1-21)"),
+        _s("coord_of_ben_priority",            "COB priority (IN1-22)"),
+        _s("notice_of_admission_flag",         "Notice of admission flag Y/N (IN1-23)"),
+        _s("notice_of_admission_date",         "Admission notice date (IN1-24)"),
+        _s("report_of_eligibility_flag",       "Eligibility report flag Y/N (IN1-25)"),
+        _s("report_of_eligibility_date",       "Eligibility report date (IN1-26)"),
+        _s("release_information_code",         "Release info code (IN1-27)"),
+        _s("pre_admit_cert",                   "Pre-admission certification number (IN1-28)"),
+        _ts("verification_datetime",           "Verification date/time (IN1-29)"),
+        _s("verification_by",                  "Verified by person (IN1-30.1)"),
+        _s("type_of_agreement_code",           "Agreement type (IN1-31)"),
+        _s("billing_status",                   "Billing status (IN1-32)"),
+        _i("lifetime_reserve_days",            "Lifetime reserve days (IN1-33)"),
+        _i("delay_before_lr_day",              "Delay before lifetime reserve day (IN1-34)"),
+        _s("company_plan_code",                "Company plan code (IN1-35)"),
+        _s("policy_number",                    "Policy number (IN1-36)"),
+        _s("policy_deductible",                "Policy deductible amount (IN1-37.1)"),
+        _s("policy_limit_amount",              "Policy limit amount (IN1-38.1)"),
+        _i("policy_limit_days",                "Policy limit in days (IN1-39)"),
+        _s("room_rate_semi_private",           "Semi-private room rate (IN1-40.1, deprecated)"),
+        _s("room_rate_private",                "Private room rate (IN1-41.1, deprecated)"),
+        _s("insureds_employment_status",       "Insured's employment status (IN1-42.1)"),
+        _s("insureds_administrative_sex",      "Insured's sex (IN1-43): M=Male, F=Female"),
+        _s("insureds_employers_address",       "Insured's employer address (IN1-44)"),
+        _s("verification_status",              "Verification status (IN1-45)"),
+        _s("prior_insurance_plan_id",          "Prior insurance plan ID (IN1-46)"),
+        _s("coverage_type",                    "Coverage type (IN1-47)"),
+        _s("handicap",                         "Handicap code (IN1-48)"),
+        _s("insureds_id_number",               "Insured's identifier (IN1-49.1)"),
+        _s("signature_code",                   "Signature code (IN1-50)"),
+        _s("signature_code_date",              "Signature code date (IN1-51)"),
+        _s("insureds_birth_place",             "Insured's birth place (IN1-52)"),
+        _s("vip_indicator",                    "VIP indicator (IN1-53)"),
+    ]
+)
+
+# ---------------------------------------------------------------------------
+# GT1 — Guarantor
+# ---------------------------------------------------------------------------
+
+GT1_SCHEMA = StructType(
+    _METADATA_FIELDS
+    + [
+        _pk_i("set_id",                           "Sequence number for this GT1 segment within the message (GT1-1)"),
+        _s("guarantor_number",                     "Guarantor identifier (GT1-2.1)"),
+        _s("guarantor_name",                       "Guarantor name raw (GT1-3)"),
+        _s("guarantor_family_name",                "Guarantor family name (GT1-3.1)"),
+        _s("guarantor_given_name",                 "Guarantor given name (GT1-3.2)"),
+        _s("guarantor_spouse_name",                "Guarantor spouse name (GT1-4.1)"),
+        _s("guarantor_address",                    "Guarantor address (GT1-5)"),
+        _s("guarantor_ph_num_home",                "Guarantor home phone (GT1-6)"),
+        _s("guarantor_ph_num_business",            "Guarantor business phone (GT1-7)"),
+        _ts("guarantor_date_of_birth",             "Guarantor date of birth (GT1-8)"),
+        _s("guarantor_administrative_sex",         "Guarantor sex (GT1-9): M=Male, F=Female"),
+        _s("guarantor_type",                       "Guarantor type (GT1-10)"),
+        _s("guarantor_relationship",               "Guarantor relationship to patient (GT1-11.1)"),
+        _s("guarantor_ssn",                        "Guarantor social security number (GT1-12)"),
+        _s("guarantor_date_begin",                 "Guarantor start date (GT1-13)"),
+        _s("guarantor_date_end",                   "Guarantor end date (GT1-14)"),
+        _i("guarantor_priority",                   "Guarantor priority (GT1-15)"),
+        _s("guarantor_employer_name",              "Guarantor employer name (GT1-16.1)"),
+        _s("guarantor_employer_address",           "Guarantor employer address (GT1-17)"),
+        _s("guarantor_employer_phone_number",      "Guarantor employer phone (GT1-18)"),
+        _s("guarantor_employee_id_number",         "Guarantor employee ID (GT1-19.1)"),
+        _s("guarantor_employment_status",          "Guarantor employment status (GT1-20)"),
+        _s("guarantor_organization_name",          "Guarantor organization name (GT1-21.1)"),
+        _s("guarantor_billing_hold_flag",          "Billing hold flag Y/N (GT1-22)"),
+        _s("guarantor_credit_rating_code",         "Credit rating code (GT1-23.1)"),
+        _ts("guarantor_death_date_and_time",       "Guarantor death date/time (GT1-24)"),
+        _s("guarantor_death_flag",                 "Guarantor death flag Y/N (GT1-25)"),
+        _s("guarantor_charge_adjustment_code",     "Charge adjustment code (GT1-26.1)"),
+        _s("guarantor_household_annual_income",    "Household annual income (GT1-27.1)"),
+        _i("guarantor_household_size",             "Household size (GT1-28)"),
+        _s("guarantor_employer_id_number",         "Guarantor employer ID (GT1-29.1)"),
+        _s("guarantor_marital_status_code",        "Guarantor marital status (GT1-30.1)"),
+        _s("guarantor_hire_effective_date",        "Guarantor hire date (GT1-31)"),
+        _s("employment_stop_date",                 "Employment stop date (GT1-32)"),
+        _s("living_dependency",                    "Living dependency (GT1-33)"),
+        _s("ambulatory_status",                    "Ambulatory status (GT1-34)"),
+        _s("citizenship",                          "Citizenship (GT1-35.1)"),
+        _s("primary_language",                     "Primary language (GT1-36.1)"),
+        _s("living_arrangement",                   "Living arrangement (GT1-37)"),
+        _s("publicity_code",                       "Publicity code (GT1-38.1)"),
+        _s("protection_indicator",                 "Protection indicator Y/N (GT1-39)"),
+        _s("student_indicator",                    "Student status (GT1-40)"),
+        _s("religion",                             "Religion (GT1-41.1)"),
+        _s("mothers_maiden_name",                  "Mother's maiden name (GT1-42.1)"),
+        _s("nationality",                          "Nationality (GT1-43.1)"),
+        _s("ethnic_group",                         "Ethnic group (GT1-44.1)"),
+        _s("contact_persons_name",                 "Contact person name (GT1-45.1)"),
+        _s("contact_persons_telephone_number",     "Contact person phone (GT1-46)"),
+        _s("contact_reason",                       "Contact reason (GT1-47.1)"),
+        _s("contact_relationship",                 "Contact relationship (GT1-48)"),
+        _s("job_title",                            "Job title (GT1-49)"),
+        _s("job_code_class",                       "Job code/class (GT1-50.1)"),
+        _s("guarantor_employers_org_name",         "Guarantor employer's org name (GT1-51.1)"),
+        _s("handicap",                             "Handicap code (GT1-52)"),
+        _s("job_status",                           "Job status (GT1-53)"),
+        _s("guarantor_financial_class",            "Financial class (GT1-54.1)"),
+        _s("guarantor_race",                       "Guarantor race (GT1-55.1)"),
+        _s("guarantor_birth_place",                "Guarantor birth place (GT1-56)"),
+        _s("vip_indicator",                        "VIP indicator (GT1-57)"),
+    ]
+)
+
+# ---------------------------------------------------------------------------
+# FT1 — Financial Transaction
+# ---------------------------------------------------------------------------
+
+FT1_SCHEMA = StructType(
+    _METADATA_FIELDS
+    + [
+        _pk_i("set_id",                              "Sequence number for this FT1 segment within the message (FT1-1)"),
+        _s("transaction_id",                          "Unique transaction identifier (FT1-2)"),
+        _s("transaction_batch_id",                    "Batch identifier (FT1-3)"),
+        _s("transaction_date",                        "Transaction date/time range start (FT1-4.1)"),
+        _ts("transaction_posting_date",               "Posting date/time (FT1-5)"),
+        _s("transaction_type",                        "Transaction type (FT1-6): CG=Charge, CR=Credit, PA=Payment, AJ=Adjustment"),
+        _s("transaction_code",                        "Transaction/charge code raw (FT1-7)"),
+        _s("transaction_code_id",                     "Transaction code identifier (FT1-7.1)"),
+        _s("transaction_code_text",                   "Transaction code text (FT1-7.2)"),
+        _s("transaction_description",                 "Transaction description (FT1-8, deprecated)"),
+        _s("transaction_description_alt",             "Alternate transaction description (FT1-9, deprecated)"),
+        _i("transaction_quantity",                    "Transaction quantity (FT1-10)"),
+        _s("transaction_amount_extended",             "Extended amount: quantity x unit price (FT1-11.1)"),
+        _s("transaction_amount_unit",                 "Unit price (FT1-12.1)"),
+        _s("department_code",                         "Department code (FT1-13.1)"),
+        _s("insurance_plan_id",                       "Insurance plan identifier (FT1-14.1)"),
+        _s("insurance_amount",                        "Insurance amount (FT1-15.1)"),
+        _s("assigned_patient_location",               "Patient location (FT1-16)"),
+        _s("fee_schedule",                            "Fee schedule (FT1-17)"),
+        _s("patient_type",                            "Patient type (FT1-18)"),
+        _s("diagnosis_code",                          "Diagnosis code (FT1-19.1)"),
+        _s("performed_by_code",                       "Performer identifier (FT1-20.1)"),
+        _s("ordered_by_code",                         "Ordering provider identifier (FT1-21.1)"),
+        _s("unit_cost",                               "Unit cost (FT1-22.1)"),
+        _s("filler_order_number",                     "Filler order number (FT1-23.1)"),
+        _s("entered_by_code",                         "Entered by identifier (FT1-24.1)"),
+        _s("procedure_code",                          "Procedure code (FT1-25.1)"),
+        _s("procedure_code_modifier",                 "Procedure modifier (FT1-26.1)"),
+        _s("advanced_beneficiary_notice_code",        "ABN code (FT1-27.1)"),
+        _s("medically_necessary_dup_proc_reason",     "Duplicate procedure reason (FT1-28.1)"),
+        _s("ndc_code",                                "National Drug Code (FT1-29.1)"),
+        _s("payment_reference_id",                    "Payment reference (FT1-30.1)"),
+        _s("transaction_reference_key",               "Transaction reference key (FT1-31)"),
+    ]
+)
+
+# ---------------------------------------------------------------------------
+# RXA — Pharmacy/Treatment Administration
+# ---------------------------------------------------------------------------
+
+RXA_SCHEMA = StructType(
+    _METADATA_FIELDS
+    + [
+        _pk_i("set_id",                                "Give sub-ID counter (RXA-1)"),
+        _i("administration_sub_id_counter",            "Administration sub-ID counter (RXA-2)"),
+        _ts("datetime_start_of_administration",        "Administration start date/time (RXA-3)"),
+        _ts("datetime_end_of_administration",          "Administration end date/time (RXA-4)"),
+        _s("administered_code",                        "Drug/vaccine code raw (RXA-5)"),
+        _s("administered_code_id",                     "Drug/vaccine code identifier (RXA-5.1)"),
+        _s("administered_code_text",                   "Drug/vaccine code text (RXA-5.2)"),
+        _s("administered_amount",                      "Amount administered (RXA-6)"),
+        _s("administered_units",                       "Units of measure (RXA-7.1)"),
+        _s("administered_dosage_form",                 "Dosage form (RXA-8.1)"),
+        _s("administration_notes",                     "Administration notes (RXA-9.1)"),
+        _s("administering_provider",                   "Provider who administered (RXA-10.1)"),
+        _s("administered_at_location",                 "Administration location (RXA-11)"),
+        _s("administered_per_time_unit",               "Rate time unit (RXA-12)"),
+        _s("administered_strength",                    "Strength administered (RXA-13)"),
+        _s("administered_strength_units",              "Strength units (RXA-14.1)"),
+        _s("substance_lot_number",                     "Lot number (RXA-15)"),
+        _ts("substance_expiration_date",               "Substance expiration date (RXA-16)"),
+        _s("substance_manufacturer_name",              "Manufacturer name (RXA-17.1)"),
+        _s("substance_treatment_refusal_reason",       "Refusal reason (RXA-18.1)"),
+        _s("indication",                               "Indication for administration (RXA-19.1)"),
+        _s("completion_status",                        "Completion status (RXA-20): CP=Complete, RE=Refused, NA=Not Administered, PA=Partial"),
+        _s("action_code_rxa",                          "Action code (RXA-21)"),
+        _ts("system_entry_datetime",                   "System entry date/time (RXA-22)"),
+        _s("administered_drug_strength_volume",        "Drug strength volume (RXA-23)"),
+        _s("administered_drug_strength_volume_units",  "Drug strength volume units (RXA-24.1)"),
+        _s("administered_barcode_identifier",          "Barcode identifier (RXA-25.1)"),
+        _s("pharmacy_order_type",                      "Pharmacy order type (RXA-26)"),
+    ]
+)
+
+# ---------------------------------------------------------------------------
+# SCH — Scheduling Activity Information
+# ---------------------------------------------------------------------------
+
+SCH_SCHEMA = StructType(
+    _METADATA_FIELDS
+    + [
+        _s("placer_appointment_id",        "Appointment ID from placer (SCH-1.1)"),
+        _s("filler_appointment_id",        "Appointment ID from filler (SCH-2.1)"),
+        _i("occurrence_number",            "Occurrence number (SCH-3)"),
+        _s("placer_group_number",          "Placer group number (SCH-4.1)"),
+        _s("schedule_id",                  "Schedule identifier (SCH-5.1)"),
+        _s("event_reason",                 "Event reason (SCH-6.1)"),
+        _s("appointment_reason",           "Reason for appointment (SCH-7.1)"),
+        _s("appointment_type",             "Appointment type (SCH-8.1)"),
+        _i("appointment_duration",         "Appointment duration in minutes (SCH-9, deprecated)"),
+        _s("appointment_duration_units",   "Duration units (SCH-10.1, deprecated)"),
+        _s("appointment_timing_quantity",  "Appointment timing quantity (SCH-11, deprecated)"),
+        _s("placer_contact_person",        "Placer contact person (SCH-12.1)"),
+        _s("placer_contact_phone_number",  "Placer contact phone (SCH-13)"),
+        _s("placer_contact_address",       "Placer contact address (SCH-14)"),
+        _s("placer_contact_location",      "Placer contact location (SCH-15)"),
+        _s("filler_contact_person",        "Filler contact person (SCH-16.1)"),
+        _s("filler_contact_phone_number",  "Filler contact phone (SCH-17)"),
+        _s("filler_contact_address",       "Filler contact address (SCH-18)"),
+        _s("filler_contact_location",      "Filler contact location (SCH-19)"),
+        _s("entered_by_person",            "Person who entered the schedule (SCH-20.1)"),
+        _s("entered_by_phone_number",      "Entered by phone number (SCH-21)"),
+        _s("entered_by_location",          "Entered by location (SCH-22)"),
+        _s("parent_placer_appointment_id", "Parent placer appointment ID (SCH-23.1)"),
+        _s("parent_filler_appointment_id", "Parent filler appointment ID (SCH-24.1)"),
+        _s("filler_status_code",           "Filler status code (SCH-25.1)"),
+        _s("placer_order_number",          "Placer order number (SCH-26.1)"),
+        _s("filler_order_number",          "Filler order number (SCH-27.1)"),
+    ]
+)
+
+# ---------------------------------------------------------------------------
+# TXA — Transcription Document Header
+# ---------------------------------------------------------------------------
+
+TXA_SCHEMA = StructType(
+    _METADATA_FIELDS
+    + [
+        _i("set_id",                              "Sequence number (TXA-1)"),
+        _s("document_type",                        "Document type (TXA-2): DS=Discharge Summary, HP=History and Physical, OP=Operative Note"),
+        _s("document_content_presentation",        "Content presentation type (TXA-3)"),
+        _ts("activity_datetime",                   "Activity date/time (TXA-4)"),
+        _s("primary_activity_provider",            "Primary activity provider (TXA-5.1)"),
+        _ts("origination_datetime",                "Origination date/time (TXA-6)"),
+        _ts("transcription_datetime",              "Transcription date/time (TXA-7)"),
+        _ts("edit_datetime",                       "Edit date/time (TXA-8)"),
+        _s("originator",                           "Originator identifier (TXA-9.1)"),
+        _s("assigned_document_authenticator",      "Assigned authenticator (TXA-10.1)"),
+        _s("transcriptionist",                     "Transcriptionist identifier (TXA-11.1)"),
+        _s("unique_document_number",               "Unique document identifier (TXA-12.1)"),
+        _s("parent_document_number",               "Parent document identifier (TXA-13.1)"),
+        _s("placer_order_number",                  "Placer order number (TXA-14.1)"),
+        _s("filler_order_number",                  "Filler order number (TXA-15.1)"),
+        _s("unique_document_file_name",            "Document file name (TXA-16)"),
+        _s("document_completion_status",           "Completion status (TXA-17): DI=Dictated, DO=Documented, AU=Authenticated, LA=Legally Authenticated"),
+        _s("document_confidentiality_status",      "Confidentiality status (TXA-18)"),
+        _s("document_availability_status",         "Availability status (TXA-19)"),
+        _s("document_storage_status",              "Storage status (TXA-20)"),
+        _s("document_change_reason",               "Reason for document change (TXA-21)"),
+        _s("authentication_person_time_stamp",     "Authenticator with timestamp (TXA-22)"),
+        _s("distributed_copies",                   "Recipients of distributed copies (TXA-23.1)"),
+    ]
+)
+
+# ---------------------------------------------------------------------------
 # Generic segment schema — used for Z-segments and any unknown segments.
 # Returns segment_type + up to 25 field_N columns.
 # ---------------------------------------------------------------------------
@@ -560,19 +1193,39 @@ GENERIC_SEGMENT_SCHEMA = StructType(
 # ---------------------------------------------------------------------------
 
 #: Segment tables exposed by the connector by default.
-SEGMENT_TABLES: list[str] = ["msh", "pid", "pv1", "obr", "obx", "al1", "dg1", "nk1", "evn"]
+SEGMENT_TABLES: list[str] = [
+    "msh", "evn", "pid", "pd1", "pv1", "pv2", "nk1", "mrg",
+    "al1", "iam", "dg1", "pr1",
+    "orc", "obr", "obx", "nte", "spm",
+    "in1", "gt1", "ft1",
+    "rxa", "sch", "txa",
+]
 
 #: Map from lowercase segment name → StructType.
 SEGMENT_SCHEMAS: dict[str, StructType] = {
     "msh": MSH_SCHEMA,
+    "evn": EVN_SCHEMA,
     "pid": PID_SCHEMA,
+    "pd1": PD1_SCHEMA,
     "pv1": PV1_SCHEMA,
+    "pv2": PV2_SCHEMA,
+    "nk1": NK1_SCHEMA,
+    "mrg": MRG_SCHEMA,
+    "al1": AL1_SCHEMA,
+    "iam": IAM_SCHEMA,
+    "dg1": DG1_SCHEMA,
+    "pr1": PR1_SCHEMA,
+    "orc": ORC_SCHEMA,
     "obr": OBR_SCHEMA,
     "obx": OBX_SCHEMA,
-    "al1": AL1_SCHEMA,
-    "dg1": DG1_SCHEMA,
-    "nk1": NK1_SCHEMA,
-    "evn": EVN_SCHEMA,
+    "nte": NTE_SCHEMA,
+    "spm": SPM_SCHEMA,
+    "in1": IN1_SCHEMA,
+    "gt1": GT1_SCHEMA,
+    "ft1": FT1_SCHEMA,
+    "rxa": RXA_SCHEMA,
+    "sch": SCH_SCHEMA,
+    "txa": TXA_SCHEMA,
 }
 
 

@@ -1,0 +1,1136 @@
+# **HL7 v2 API Documentation**
+
+## **Authorization**
+
+No credentials are required. The HL7 v2 connector reads message files directly from a **Databricks Unity Catalog Volume**. File access is managed natively by Databricks — no API keys, OAuth tokens, or external authentication.
+
+**Connection Parameters:**
+
+| Parameter | Required | Description |
+|---|---|---|
+| `volume_path` | Yes | Path to the Volume directory containing HL7 files, e.g. `/Volumes/healthcare/raw/hl7_feed/` |
+| `file_pattern` | No | Glob pattern for file matching (default: `*.hl7`). Use `**/*.hl7` for recursive search. |
+
+---
+
+## **Object List**
+
+The object list is **static** — defined by the HL7 v2 specification. Each segment type maps to one table. The connector supports the following segments, organized by functional domain:
+
+### Patient Administration
+
+| Table Name | HL7 Segment | Fields | Description |
+|---|---|---|---|
+| `msh` | MSH | 21 | Message Header — one row per HL7 message |
+| `evn` | EVN | 7 | Event Type — trigger event metadata |
+| `pid` | PID | 39 | Patient Identification — demographics and identifiers |
+| `pd1` | PD1 | 21 | Patient Additional Demographic — living will, organ donor, primary facility |
+| `pv1` | PV1 | 52 | Patient Visit — encounter/admission data |
+| `pv2` | PV2 | 49 | Patient Visit Additional — admit reason, expected dates, mode of arrival |
+| `nk1` | NK1 | 39 | Next of Kin / Associated Parties |
+| `mrg` | MRG | 7 | Merge Patient Information — prior identifiers for patient merges |
+
+### Clinical
+
+| Table Name | HL7 Segment | Fields | Description |
+|---|---|---|---|
+| `al1` | AL1 | 6 | Patient Allergy Information (snapshot mode) |
+| `iam` | IAM | 20 | Patient Adverse Reaction Information (action code mode — newer replacement for AL1) |
+| `dg1` | DG1 | 21 | Diagnosis — admitting, working, and final diagnoses |
+| `pr1` | PR1 | 20 | Procedures — surgical, diagnostic, and therapeutic procedures |
+
+### Orders & Results
+
+| Table Name | HL7 Segment | Fields | Description |
+|---|---|---|---|
+| `orc` | ORC | 31 | Common Order — order control, status, and provider info |
+| `obr` | OBR | 50 | Observation Request — lab/radiology orders |
+| `obx` | OBX | 25 | Observation Result — individual test results |
+| `nte` | NTE | 4 | Notes and Comments — free-text annotations attached to orders/results |
+| `spm` | SPM | 29 | Specimen — specimen type, collection, and handling details |
+
+### Financial / Insurance
+
+| Table Name | HL7 Segment | Fields | Description |
+|---|---|---|---|
+| `in1` | IN1 | 53 | Insurance — policy coverage and billing information |
+| `gt1` | GT1 | 57 | Guarantor — financially responsible party |
+| `ft1` | FT1 | 31 | Financial Transaction — charges, payments, adjustments |
+
+### Pharmacy
+
+| Table Name | HL7 Segment | Fields | Description |
+|---|---|---|---|
+| `rxa` | RXA | 26 | Pharmacy/Treatment Administration — medication administration records |
+
+### Scheduling
+
+| Table Name | HL7 Segment | Fields | Description |
+|---|---|---|---|
+| `sch` | SCH | 27 | Scheduling Activity Information — appointment details |
+
+### Documents
+
+| Table Name | HL7 Segment | Fields | Description |
+|---|---|---|---|
+| `txa` | TXA | 23 | Transcription Document Header — document metadata and status |
+
+Additionally, arbitrary **Z-segments** (site-specific custom segments) can be ingested using the `segment_type` table option, producing a generic schema with `field_1` … `field_25` columns.
+
+Not all messages contain all segments. For example, ADT messages typically include MSH, EVN, PID, PD1, PV1, PV2, NK1, AL1, DG1 but not OBR/OBX; ORU messages include MSH, PID, ORC, OBR, OBX, SPM but may omit EVN, AL1, DG1, NK1; DFT messages include MSH, EVN, PID, PV1, FT1, DG1, GT1, IN1.
+
+---
+
+## **Object Schema**
+
+Schemas are **static** — defined by the HL7 v2.5.1 specification. There is no API to discover schemas; they are embedded in the connector code based on the segment definitions below.
+
+Every table includes four common columns for traceability and joining:
+
+| Column | Source | Type | Description |
+|---|---|---|---|
+| `message_id` | MSH-10 | STRING | Unique message control ID — primary join key across all tables |
+| `message_timestamp` | MSH-7 | STRING | Message date/time (raw HL7 DTM string, e.g. `20240115120000`) |
+| `hl7_version` | MSH-12 | STRING | HL7 version string (e.g. `2.5.1`) |
+| `source_file` | filename | STRING | Source `.hl7` filename for traceability |
+
+### MSH — Message Header (21 fields)
+
+Source: [Caristix HL7v2.5.1 MSH](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/MSH)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| MSH.1 | Field Separator | ST | R | 1 | 1 | Always `\|` |
+| MSH.2 | Encoding Characters | ST | R | 4 | 1 | Default `^~\&` — component, repetition, escape, subcomponent separators |
+| MSH.3 | Sending Application | HD | O | 227 | 1 | Source application identifier |
+| MSH.4 | Sending Facility | HD | O | 227 | 1 | Source facility identifier |
+| MSH.5 | Receiving Application | HD | O | 227 | 1 | Destination application identifier |
+| MSH.6 | Receiving Facility | HD | O | 227 | 1 | Destination facility identifier |
+| MSH.7 | Date/Time Of Message | TS | R | 26 | 1 | Message timestamp (YYYYMMDDHHMMSS format) |
+| MSH.8 | Security | ST | O | 40 | 1 | Security classification |
+| MSH.9 | Message Type | MSG | R | 15 | 1 | Message type (e.g. `ADT^A01^ADT_A01`) — components: message code, trigger event, structure |
+| MSH.10 | Message Control ID | ST | R | 20 | 1 | Unique message identifier — used as join key across all tables |
+| MSH.11 | Processing ID | PT | R | 3 | 1 | `P` (production), `T` (test), `D` (debug) |
+| MSH.12 | Version ID | VID | R | 60 | 1 | HL7 version (e.g. `2.5.1`) |
+| MSH.13 | Sequence Number | NM | O | 15 | 1 | Sequence number for continuous messaging |
+| MSH.14 | Continuation Pointer | ST | O | 180 | 1 | Continuation pointer for fragmented messages |
+| MSH.15 | Accept Acknowledgment Type | ID | O | 2 | 1 | `AL` (always), `NE` (never), `ER` (error/reject), `SU` (success) |
+| MSH.16 | Application Acknowledgment Type | ID | O | 2 | 1 | Same values as MSH.15 |
+| MSH.17 | Country Code | ID | O | 3 | 1 | ISO 3166 country code |
+| MSH.18 | Character Set | ID | O | 16 | * | Character encoding (e.g. `ASCII`, `8859/1`, `UNICODE UTF-8`) |
+| MSH.19 | Principal Language Of Message | CE | O | 250 | 1 | Language code |
+| MSH.20 | Alternate Character Set Handling Scheme | ID | O | 20 | 1 | `ISO 2022-1994` or `2.3` |
+| MSH.21 | Message Profile Identifier | EI | O | 427 | * | Conformance profile IDs |
+
+### EVN — Event Type (7 fields)
+
+Source: [Caristix HL7v2.5.1 EVN](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/EVN)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| EVN.1 | Event Type Code | ID | B | 3 | 1 | Deprecated — use MSH.9 (Table 0003) |
+| EVN.2 | Recorded Date/Time | TS | R | 26 | 1 | When the event was recorded in the system |
+| EVN.3 | Date/Time Planned Event | TS | O | 26 | 1 | Planned event datetime |
+| EVN.4 | Event Reason Code | IS | O | 3 | 1 | Reason for the event (Table 0062) |
+| EVN.5 | Operator ID | XCN | O | 250 | * | User who triggered the event (comp 1 = ID) (Table 0188) |
+| EVN.6 | Event Occurred | TS | O | 26 | 1 | When the clinical event actually occurred |
+| EVN.7 | Event Facility | HD | O | 241 | 1 | Facility where event occurred |
+
+### PID — Patient Identification (39 fields)
+
+Source: [Caristix HL7v2.5.1 PID](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/PID)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| PID.1 | Set ID - PID | SI | O | 4 | 1 | Sequence number |
+| PID.2 | Patient ID | CX | B | 20 | 1 | Deprecated — use PID.3 |
+| PID.3 | Patient Identifier List | CX | R | 250 | * | MRN and other patient identifiers (component 1 = ID value) |
+| PID.4 | Alternate Patient ID - PID | CX | B | 20 | * | Deprecated — use PID.3 |
+| PID.5 | Patient Name | XPN | R | 250 | * | Family name (comp 1), given name (comp 2), middle (comp 3) |
+| PID.6 | Mother's Maiden Name | XPN | O | 250 | * | Mother's maiden name |
+| PID.7 | Date/Time of Birth | TS | O | 26 | 1 | DOB in YYYYMMDD format |
+| PID.8 | Administrative Sex | IS | O | 1 | 1 | `M`, `F`, `U`, `A`, `N`, `O` (Table 0001) |
+| PID.9 | Patient Alias | XPN | B | 250 | * | Deprecated |
+| PID.10 | Race | CE | O | 250 | * | Race code (Table 0005) |
+| PID.11 | Patient Address | XAD | O | 250 | * | Street (comp 1), city (comp 3), state (comp 4), zip (comp 5) |
+| PID.12 | County Code | IS | B | 4 | 1 | Deprecated |
+| PID.13 | Phone Number - Home | XTN | O | 250 | * | Home phone number |
+| PID.14 | Phone Number - Business | XTN | O | 250 | * | Business phone number |
+| PID.15 | Primary Language | CE | O | 250 | 1 | Primary language (Table 0296) |
+| PID.16 | Marital Status | CE | O | 250 | 1 | Marital status (Table 0002) |
+| PID.17 | Religion | CE | O | 250 | 1 | Religion (Table 0006) |
+| PID.18 | Patient Account Number | CX | O | 250 | 1 | Account number |
+| PID.19 | SSN Number - Patient | ST | B | 16 | 1 | Deprecated — use PID.3 |
+| PID.20 | Driver's License Number | DLN | B | 25 | 1 | Deprecated — use PID.3 |
+| PID.21 | Mother's Identifier | CX | O | 250 | * | Mother's patient identifier |
+| PID.22 | Ethnic Group | CE | O | 250 | * | Ethnicity (Table 0189) |
+| PID.23 | Birth Place | ST | O | 250 | 1 | Birth location |
+| PID.24 | Multiple Birth Indicator | ID | O | 1 | 1 | Y/N (Table 0136) |
+| PID.25 | Birth Order | NM | O | 2 | 1 | Birth order for multiple births |
+| PID.26 | Citizenship | CE | O | 250 | * | Citizenship (Table 0171) |
+| PID.27 | Veterans Military Status | CE | O | 250 | 1 | Veterans status (Table 0172) |
+| PID.28 | Nationality | CE | B | 250 | 1 | Deprecated |
+| PID.29 | Patient Death Date and Time | TS | O | 26 | 1 | Death datetime |
+| PID.30 | Patient Death Indicator | ID | O | 1 | 1 | Y/N (Table 0136) |
+| PID.31 | Identity Unknown Indicator | ID | O | 1 | 1 | Y/N (Table 0136) |
+| PID.32 | Identity Reliability Code | IS | O | 20 | * | Reliability code (Table 0445) |
+| PID.33 | Last Update Date/Time | TS | O | 26 | 1 | Last demographics update |
+| PID.34 | Last Update Facility | HD | O | 241 | 1 | Facility that last updated |
+| PID.35 | Species Code | CE | C | 250 | 1 | Veterinary use (Table 0446) |
+| PID.36 | Breed Code | CE | C | 250 | 1 | Veterinary use (Table 0447) |
+| PID.37 | Strain | ST | O | 80 | 1 | Veterinary use |
+| PID.38 | Production Class Code | CE | O | 250 | 2 | Veterinary use (Table 0429) |
+| PID.39 | Tribal Citizenship | CWE | O | 250 | * | Tribal citizenship (Table 0171) |
+
+### PD1 — Patient Additional Demographic (21 fields)
+
+Source: [Caristix HL7v2.5.1 PD1](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/PD1)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| PD1.1 | Living Dependency | IS | O | 2 | * | Living dependency code (Table 0223) |
+| PD1.2 | Living Arrangement | IS | O | 2 | 1 | Living arrangement code (Table 0220) |
+| PD1.3 | Patient Primary Facility | XON | O | 250 | * | Primary care facility name |
+| PD1.4 | Patient Primary Care Provider Name and ID No. | XCN | B | 250 | * | Deprecated — primary care provider |
+| PD1.5 | Student Indicator | IS | O | 2 | 1 | Student status (Table 0231) |
+| PD1.6 | Handicap | IS | O | 2 | 1 | Handicap code (Table 0295) |
+| PD1.7 | Living Will Code | IS | O | 2 | 1 | Living will status (Table 0315) |
+| PD1.8 | Organ Donor Code | IS | O | 2 | 1 | Organ donor status (Table 0316) |
+| PD1.9 | Separate Bill | ID | O | 1 | 1 | Y/N separate billing (Table 0136) |
+| PD1.10 | Duplicate Patient | CX | O | 250 | * | Duplicate patient identifiers |
+| PD1.11 | Publicity Code | CE | O | 250 | 1 | Publicity code (Table 0215) |
+| PD1.12 | Protection Indicator | ID | O | 1 | 1 | Y/N protection (Table 0136) |
+| PD1.13 | Protection Indicator Effective Date | DT | O | 8 | 1 | Protection effective date |
+| PD1.14 | Place of Worship | XON | O | 250 | * | Place of worship |
+| PD1.15 | Advance Directive Code | CE | O | 250 | * | Advance directive code (Table 0435) |
+| PD1.16 | Immunization Registry Status | IS | O | 1 | 1 | Immunization registry status (Table 0441) |
+| PD1.17 | Immunization Registry Status Effective Date | DT | O | 8 | 1 | Registry status effective date |
+| PD1.18 | Publicity Code Effective Date | DT | O | 8 | 1 | Publicity code effective date |
+| PD1.19 | Military Branch | IS | O | 5 | 1 | Military branch (Table 0140) |
+| PD1.20 | Military Rank/Grade | IS | O | 2 | 1 | Military rank/grade (Table 0141) |
+| PD1.21 | Military Status | IS | O | 3 | 1 | Military status (Table 0142) |
+
+### PV1 — Patient Visit (52 fields)
+
+Source: [Caristix HL7v2.5.1 PV1](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/PV1)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| PV1.1 | Set ID - PV1 | SI | O | 4 | 1 | Sequence number |
+| PV1.2 | Patient Class | IS | R | 1 | 1 | `I` (inpatient), `O` (outpatient), `E` (emergency), `P` (preadmit), `R` (recurring), `B` (obstetrics) (Table 0004) |
+| PV1.3 | Assigned Patient Location | PL | O | 80 | 1 | Point of care (comp 1), room (comp 2), bed (comp 3), facility (comp 4) |
+| PV1.4 | Admission Type | IS | O | 2 | 1 | Admission type (Table 0007) |
+| PV1.5 | Preadmit Number | CX | O | 250 | 1 | Pre-admission identifier |
+| PV1.6 | Prior Patient Location | PL | O | 80 | 1 | Previous location |
+| PV1.7 | Attending Doctor | XCN | O | 250 | * | Attending physician ID (comp 1), family name (comp 2), given name (comp 3) (Table 0010) |
+| PV1.8 | Referring Doctor | XCN | O | 250 | * | Referring physician (Table 0010) |
+| PV1.9 | Consulting Doctor | XCN | B | 250 | * | Deprecated — use ROL segment |
+| PV1.10 | Hospital Service | IS | O | 3 | 1 | Service type (Table 0069) |
+| PV1.11 | Temporary Location | PL | O | 80 | 1 | Temporary location |
+| PV1.12 | Preadmit Test Indicator | IS | O | 2 | 1 | Pre-admission testing (Table 0087) |
+| PV1.13 | Re-admission Indicator | IS | O | 2 | 1 | Re-admission flag (Table 0092) |
+| PV1.14 | Admit Source | IS | O | 6 | 1 | Source of admission (Table 0023) |
+| PV1.15 | Ambulatory Status | IS | O | 2 | * | Ambulatory status (Table 0009) |
+| PV1.16 | VIP Indicator | IS | O | 2 | 1 | VIP status (Table 0099) |
+| PV1.17 | Admitting Doctor | XCN | O | 250 | * | Admitting physician (Table 0010) |
+| PV1.18 | Patient Type | IS | O | 2 | 1 | Patient type (Table 0018) |
+| PV1.19 | Visit Number | CX | O | 250 | 1 | Encounter/visit identifier (comp 1 = ID) |
+| PV1.20 | Financial Class | FC | O | 50 | * | Financial class |
+| PV1.21 | Charge Price Indicator | IS | O | 2 | 1 | Charge price indicator (Table 0032) |
+| PV1.22 | Courtesy Code | IS | O | 2 | 1 | Courtesy code (Table 0045) |
+| PV1.23 | Credit Rating | IS | O | 2 | 1 | Credit rating (Table 0046) |
+| PV1.24 | Contract Code | IS | O | 2 | * | Contract code (Table 0044) |
+| PV1.25 | Contract Effective Date | DT | O | 8 | * | Contract effective date |
+| PV1.26 | Contract Amount | NM | O | 12 | * | Contract amount |
+| PV1.27 | Contract Period | NM | O | 3 | * | Contract period in days |
+| PV1.28 | Interest Code | IS | O | 2 | 1 | Interest code (Table 0073) |
+| PV1.29 | Transfer to Bad Debt Code | IS | O | 4 | 1 | Bad debt code (Table 0110) |
+| PV1.30 | Transfer to Bad Debt Date | DT | O | 8 | 1 | Date of bad debt transfer |
+| PV1.31 | Bad Debt Agency Code | IS | O | 10 | 1 | Collection agency (Table 0021) |
+| PV1.32 | Bad Debt Transfer Amount | NM | O | 12 | 1 | Amount transferred |
+| PV1.33 | Bad Debt Recovery Amount | NM | O | 12 | 1 | Amount recovered |
+| PV1.34 | Delete Account Indicator | IS | O | 1 | 1 | Account deletion flag (Table 0111) |
+| PV1.35 | Delete Account Date | DT | O | 8 | 1 | Account deletion date |
+| PV1.36 | Discharge Disposition | IS | O | 3 | 1 | Discharge disposition (Table 0112) |
+| PV1.37 | Discharged to Location | DLD | O | 47 | 1 | Discharge location |
+| PV1.38 | Diet Type | CE | O | 250 | 1 | Diet type (Table 0114) |
+| PV1.39 | Servicing Facility | IS | O | 2 | 1 | Servicing facility (Table 0115) |
+| PV1.40 | Bed Status | IS | B | 1 | 1 | Deprecated |
+| PV1.41 | Account Status | IS | O | 2 | 1 | Account status (Table 0117) |
+| PV1.42 | Pending Location | PL | O | 80 | 1 | Pending transfer location |
+| PV1.43 | Prior Temporary Location | PL | O | 80 | 1 | Previous temporary location |
+| PV1.44 | Admit Date/Time | TS | O | 26 | 1 | Admission datetime |
+| PV1.45 | Discharge Date/Time | TS | O | 26 | * | Discharge datetime |
+| PV1.46 | Current Patient Balance | NM | O | 12 | 1 | Current balance |
+| PV1.47 | Total Charges | NM | O | 12 | 1 | Total charges |
+| PV1.48 | Total Adjustments | NM | O | 12 | 1 | Total adjustments |
+| PV1.49 | Total Payments | NM | O | 12 | 1 | Total payments |
+| PV1.50 | Alternate Visit ID | CX | O | 250 | 1 | Alternate visit identifier |
+| PV1.51 | Visit Indicator | IS | O | 1 | 1 | Visit indicator (Table 0326) |
+| PV1.52 | Other Healthcare Provider | XCN | B | 250 | * | Deprecated — use ROL segment |
+
+### PV2 — Patient Visit Additional Information (49 fields)
+
+Source: [Caristix HL7v2.5.1 PV2](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/PV2)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| PV2.1 | Prior Pending Location | PL | C | 80 | 1 | Prior pending location |
+| PV2.2 | Accommodation Code | CE | O | 250 | 1 | Accommodation code (Table 0129) |
+| PV2.3 | Admit Reason | CE | O | 250 | 1 | Reason for admission |
+| PV2.4 | Transfer Reason | CE | O | 250 | 1 | Reason for transfer |
+| PV2.5 | Patient Valuables | ST | O | 25 | * | Patient's valuable items |
+| PV2.6 | Patient Valuables Location | ST | O | 25 | 1 | Location of patient valuables |
+| PV2.7 | Visit User Code | IS | O | 2 | * | Visit user code (Table 0130) |
+| PV2.8 | Expected Admit Date/Time | TS | O | 26 | 1 | Expected admission datetime |
+| PV2.9 | Expected Discharge Date/Time | TS | O | 26 | 1 | Expected discharge datetime |
+| PV2.10 | Estimated Length of Inpatient Stay | NM | O | 3 | 1 | Estimated stay in days |
+| PV2.11 | Actual Length of Inpatient Stay | NM | O | 3 | 1 | Actual stay in days |
+| PV2.12 | Visit Description | ST | O | 50 | 1 | Visit description |
+| PV2.13 | Referral Source Code | XCN | O | 250 | * | Referral source |
+| PV2.14 | Previous Service Date | DT | O | 8 | 1 | Previous service date |
+| PV2.15 | Employment Illness Related Indicator | ID | O | 1 | 1 | Y/N employment illness (Table 0136) |
+| PV2.16 | Purge Status Code | IS | O | 1 | 1 | Purge status (Table 0213) |
+| PV2.17 | Purge Status Date | DT | O | 8 | 1 | Purge status date |
+| PV2.18 | Special Program Code | IS | O | 2 | 1 | Special program (Table 0214) |
+| PV2.19 | Retention Indicator | ID | O | 1 | 1 | Y/N retention (Table 0136) |
+| PV2.20 | Expected Number of Insurance Plans | NM | O | 1 | 1 | Number of insurance plans |
+| PV2.21 | Visit Publicity Code | IS | O | 1 | 1 | Visit publicity (Table 0215) |
+| PV2.22 | Visit Protection Indicator | ID | O | 1 | 1 | Y/N visit protection (Table 0136) |
+| PV2.23 | Clinic Organization Name | XON | O | 250 | * | Clinic organization |
+| PV2.24 | Patient Status Code | IS | O | 2 | 1 | Patient status (Table 0216) |
+| PV2.25 | Visit Priority Code | IS | O | 1 | 1 | Visit priority (Table 0217) |
+| PV2.26 | Previous Treatment Date | DT | O | 8 | 1 | Previous treatment date |
+| PV2.27 | Expected Discharge Disposition | IS | O | 2 | 1 | Expected discharge disposition (Table 0112) |
+| PV2.28 | Signature on File Date | DT | O | 8 | 1 | Signature on file date |
+| PV2.29 | First Similar Illness Date | DT | O | 8 | 1 | First similar illness date |
+| PV2.30 | Patient Charge Adjustment Code | CE | O | 250 | 1 | Patient charge adjustment (Table 0218) |
+| PV2.31 | Recurring Service Code | IS | O | 2 | 1 | Recurring service (Table 0219) |
+| PV2.32 | Billing Media Code | ID | O | 1 | 1 | Y/N billing media (Table 0136) |
+| PV2.33 | Expected Surgery Date and Time | TS | O | 26 | 1 | Expected surgery datetime |
+| PV2.34 | Military Partnership Code | ID | O | 1 | 1 | Y/N military partnership (Table 0136) |
+| PV2.35 | Military Non-Availability Code | ID | O | 1 | 1 | Y/N military non-availability (Table 0136) |
+| PV2.36 | Newborn Baby Indicator | ID | O | 1 | 1 | Y/N newborn (Table 0136) |
+| PV2.37 | Baby Detained Indicator | ID | O | 1 | 1 | Y/N baby detained (Table 0136) |
+| PV2.38 | Mode of Arrival Code | CE | O | 250 | 1 | Mode of arrival (Table 0430) |
+| PV2.39 | Recreational Drug Use Code | CE | O | 250 | * | Recreational drug use (Table 0431) |
+| PV2.40 | Admission Level of Care Code | CE | O | 250 | 1 | Admission level of care (Table 0432) |
+| PV2.41 | Precaution Code | CE | O | 250 | * | Precaution code (Table 0433) |
+| PV2.42 | Patient Condition Code | CE | O | 250 | 1 | Patient condition (Table 0434) |
+| PV2.43 | Living Will Code | IS | O | 2 | 1 | Living will (Table 0315) |
+| PV2.44 | Organ Donor Code | IS | O | 2 | 1 | Organ donor (Table 0316) |
+| PV2.45 | Advance Directive Code | CE | O | 250 | * | Advance directive (Table 0435) |
+| PV2.46 | Patient Status Effective Date | DT | O | 8 | 1 | Patient status effective date |
+| PV2.47 | Expected LOA Return Date/Time | TS | O | 26 | 1 | Expected leave of absence return |
+| PV2.48 | Expected Pre-admission Testing Date/Time | TS | C | 26 | 1 | Expected pre-admission testing datetime |
+| PV2.49 | Notify Clergy Code | IS | O | 20 | * | Notify clergy code (Table 0534) |
+
+### NK1 — Next of Kin / Associated Parties (39 fields)
+
+Source: [Caristix HL7v2.5.1 NK1](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/NK1)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| NK1.1 | Set ID - NK1 | SI | R | 4 | 1 | Sequence number |
+| NK1.2 | NK Name | XPN | O | 250 | * | Contact name (comp 1 = family, comp 2 = given) |
+| NK1.3 | Relationship | CE | O | 250 | 1 | Relationship to patient (comp 1 = code, comp 2 = text) (Table 0063) |
+| NK1.4 | Address | XAD | O | 250 | * | Contact address |
+| NK1.5 | Phone Number | XTN | O | 250 | * | Home phone number |
+| NK1.6 | Business Phone Number | XTN | O | 250 | * | Work phone number |
+| NK1.7 | Contact Role | CE | O | 250 | 1 | Contact role (Table 0131) |
+| NK1.8 | Start Date | DT | O | 8 | 1 | Relationship start date |
+| NK1.9 | End Date | DT | O | 8 | 1 | Relationship end date |
+| NK1.10 | Job Title | ST | O | 60 | 1 | Job title |
+| NK1.11 | Job Code/Class | JCC | O | 20 | 1 | Job code/class |
+| NK1.12 | Employee Number | CX | O | 250 | 1 | Employee number |
+| NK1.13 | Organization Name | XON | O | 250 | * | Organization name |
+| NK1.14 | Marital Status | CE | O | 250 | 1 | Marital status (Table 0002) |
+| NK1.15 | Administrative Sex | IS | O | 1 | 1 | Sex (Table 0001) |
+| NK1.16 | Date/Time of Birth | TS | O | 26 | 1 | Date of birth |
+| NK1.17 | Living Dependency | IS | O | 2 | * | Living dependency (Table 0223) |
+| NK1.18 | Ambulatory Status | IS | O | 2 | * | Ambulatory status (Table 0009) |
+| NK1.19 | Citizenship | CE | O | 250 | * | Citizenship (Table 0171) |
+| NK1.20 | Primary Language | CE | O | 250 | 1 | Primary language (Table 0296) |
+| NK1.21 | Living Arrangement | IS | O | 2 | 1 | Living arrangement (Table 0220) |
+| NK1.22 | Publicity Code | CE | O | 250 | 1 | Publicity code (Table 0215) |
+| NK1.23 | Protection Indicator | ID | O | 1 | 1 | Y/N protection (Table 0136) |
+| NK1.24 | Student Indicator | IS | O | 2 | 1 | Student status (Table 0231) |
+| NK1.25 | Religion | CE | O | 250 | 1 | Religion (Table 0006) |
+| NK1.26 | Mother's Maiden Name | XPN | O | 250 | * | Mother's maiden name |
+| NK1.27 | Nationality | CE | O | 250 | 1 | Nationality (Table 0212) |
+| NK1.28 | Ethnic Group | CE | O | 250 | * | Ethnic group (Table 0189) |
+| NK1.29 | Contact Reason | CE | O | 250 | * | Reason for contact (Table 0222) |
+| NK1.30 | Contact Person's Name | XPN | O | 250 | * | Contact person name |
+| NK1.31 | Contact Person's Telephone Number | XTN | O | 250 | * | Contact person phone |
+| NK1.32 | Contact Person's Address | XAD | O | 250 | * | Contact person address |
+| NK1.33 | Identifiers | CX | O | 250 | * | NK identifiers |
+| NK1.34 | Job Status | IS | O | 2 | 1 | Job status (Table 0311) |
+| NK1.35 | Race | CE | O | 250 | * | Race (Table 0005) |
+| NK1.36 | Handicap | IS | O | 2 | 1 | Handicap (Table 0295) |
+| NK1.37 | Social Security Number | ST | O | 16 | 1 | SSN |
+| NK1.38 | Birth Place | ST | O | 250 | 1 | Birth place |
+| NK1.39 | VIP Indicator | IS | O | 2 | 1 | VIP indicator (Table 0099) |
+
+### MRG — Merge Patient Information (7 fields)
+
+Source: [Caristix HL7v2.5.1 MRG](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/MRG)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| MRG.1 | Prior Patient Identifier List | CX | R | 250 | * | Prior patient identifiers (comp 1 = ID value) |
+| MRG.2 | Prior Alternate Patient ID | CX | B | 250 | * | Deprecated — prior alternate ID |
+| MRG.3 | Prior Patient Account Number | CX | O | 250 | 1 | Prior account number |
+| MRG.4 | Prior Patient ID | CX | B | 250 | 1 | Deprecated — prior patient ID |
+| MRG.5 | Prior Visit Number | CX | O | 250 | 1 | Prior visit number |
+| MRG.6 | Prior Alternate Visit ID | CX | O | 250 | 1 | Prior alternate visit ID |
+| MRG.7 | Prior Patient Name | XPN | O | 250 | * | Prior patient name (comp 1 = family, comp 2 = given) |
+
+### AL1 — Patient Allergy Information (6 fields)
+
+Source: [Caristix HL7v2.5.1 AL1](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/AL1)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| AL1.1 | Set ID - AL1 | SI | R | 4 | 1 | Sequence number |
+| AL1.2 | Allergen Type Code | CE | O | 250 | 1 | `DA` (drug allergy), `FA` (food allergy), `EA` (environmental allergy), `MA` (miscellaneous allergy), `MC` (miscellaneous contraindication), `LA` (animal allergy), `PA` (plant allergy) (Table 0127) |
+| AL1.3 | Allergen Code/Mnemonic/Description | CE | R | 250 | 1 | Allergen identifier (comp 1 = code, comp 2 = text, comp 3 = coding system) |
+| AL1.4 | Allergy Severity Code | CE | O | 250 | 1 | `SV` (severe), `MO` (moderate), `MI` (mild), `U` (unknown) (Table 0128) |
+| AL1.5 | Allergy Reaction Code | ST | O | 15 | * | Reaction description (e.g. `HIVES`, `RASH`, `ANAPHYLAXIS`) |
+| AL1.6 | Identification Date | DT | B | 8 | 1 | Deprecated — date allergy was identified |
+
+### IAM — Patient Adverse Reaction Information (20 fields)
+
+Source: [Caristix HL7v2.5.1 IAM](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/IAM)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| IAM.1 | Set ID - IAM | SI | R | 4 | 1 | Sequence number |
+| IAM.2 | Allergen Type Code | CE | O | 250 | 1 | Allergen type (Table 0127) — same values as AL1.2 |
+| IAM.3 | Allergen Code/Mnemonic/Description | CE | R | 250 | 1 | Allergen identifier (comp 1 = code, comp 2 = text) |
+| IAM.4 | Allergy Severity Code | CE | O | 250 | 1 | Allergy severity (Table 0128) |
+| IAM.5 | Allergy Reaction Code | ST | O | 15 | * | Reaction description |
+| IAM.6 | Allergy Action Code | CNE | R | 250 | 1 | Action code: `A` (add), `D` (delete), `U` (update) (Table 0323) |
+| IAM.7 | Allergy Unique Identifier | EI | C | 427 | 1 | Unique allergy identifier (comp 1 = entity ID) |
+| IAM.8 | Action Reason | ST | O | 60 | 1 | Reason for the action |
+| IAM.9 | Sensitivity to Causative Agent Code | CE | O | 250 | 1 | Sensitivity code (Table 0436) |
+| IAM.10 | Allergen Group Code/Mnemonic/Description | CE | O | 250 | 1 | Allergen group (comp 1 = code, comp 2 = text) |
+| IAM.11 | Onset Date | DT | O | 8 | 1 | Allergy onset date |
+| IAM.12 | Onset Date Text | ST | O | 60 | 1 | Free-text onset date description |
+| IAM.13 | Reported Date/Time | TS | O | 8 | 1 | When the allergy was reported |
+| IAM.14 | Reported By | XPN | O | 250 | 1 | Person who reported (comp 1 = family, comp 2 = given) |
+| IAM.15 | Relationship to Patient Code | CE | O | 250 | 1 | Reporter's relationship (Table 0063) |
+| IAM.16 | Alert Device Code | CE | O | 250 | 1 | Alert device (Table 0437) |
+| IAM.17 | Allergy Clinical Status Code | CE | O | 250 | 1 | Clinical status (Table 0438) |
+| IAM.18 | Statused by Person | XCN | O | 250 | 1 | Person who set status (comp 1 = ID) |
+| IAM.19 | Statused by Organization | XON | O | 250 | 1 | Organization that set status |
+| IAM.20 | Statused at Date/Time | TS | O | 8 | 1 | Status datetime |
+
+### DG1 — Diagnosis (21 fields)
+
+Source: [Caristix HL7v2.5.1 DG1](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/DG1)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| DG1.1 | Set ID - DG1 | SI | R | 4 | 1 | Sequence number |
+| DG1.2 | Diagnosis Coding Method | ID | B | 2 | 1 | Deprecated (Table 0053) |
+| DG1.3 | Diagnosis Code - DG1 | CE | O | 250 | 1 | ICD-10 or other diagnosis code (comp 1 = code, comp 2 = text, comp 3 = coding system) (Table 0051) |
+| DG1.4 | Diagnosis Description | ST | B | 40 | 1 | Deprecated — use DG1.3 comp 2 |
+| DG1.5 | Diagnosis Date/Time | TS | O | 26 | 1 | When diagnosis was recorded |
+| DG1.6 | Diagnosis Type | IS | R | 2 | 1 | `A` (admitting), `W` (working), `F` (final) (Table 0052) |
+| DG1.7 | Major Diagnostic Category | CE | B | 250 | 1 | Deprecated (Table 0118) |
+| DG1.8 | Diagnostic Related Group | CE | B | 250 | 1 | Deprecated (Table 0055) |
+| DG1.9 | DRG Approval Indicator | ID | B | 1 | 1 | Deprecated (Table 0136) |
+| DG1.10 | DRG Grouper Review Code | IS | B | 2 | 1 | Deprecated (Table 0056) |
+| DG1.11 | Outlier Type | CE | B | 250 | 1 | Deprecated (Table 0083) |
+| DG1.12 | Outlier Days | NM | B | 3 | 1 | Deprecated |
+| DG1.13 | Outlier Cost | CP | B | 12 | 1 | Deprecated |
+| DG1.14 | Grouper Version And Type | ST | B | 4 | 1 | Deprecated |
+| DG1.15 | Diagnosis Priority | ID | O | 2 | 1 | Priority code (Table 0359) |
+| DG1.16 | Diagnosing Clinician | XCN | O | 250 | * | Diagnosing physician |
+| DG1.17 | Diagnosis Classification | IS | O | 3 | 1 | Classification (Table 0228) |
+| DG1.18 | Confidential Indicator | ID | O | 1 | 1 | Y/N confidentiality (Table 0136) |
+| DG1.19 | Attestation Date/Time | TS | O | 26 | 1 | Attestation datetime |
+| DG1.20 | Diagnosis Identifier | EI | C | 427 | 1 | Unique diagnosis identifier |
+| DG1.21 | Diagnosis Action Code | ID | C | 1 | 1 | `A` (add), `D` (delete), `U` (update) (Table 0206) |
+
+### PR1 — Procedures (20 fields)
+
+Source: [Caristix HL7v2.5.1 PR1](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/PR1)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| PR1.1 | Set ID - PR1 | SI | R | 4 | 1 | Sequence number |
+| PR1.2 | Procedure Coding Method | IS | B | 3 | 1 | Deprecated (Table 0089) |
+| PR1.3 | Procedure Code | CE | R | 250 | 1 | CPT/ICD procedure code (comp 1 = code, comp 2 = text, comp 3 = coding system) (Table 0088) |
+| PR1.4 | Procedure Description | ST | B | 40 | 1 | Deprecated — use PR1.3 comp 2 |
+| PR1.5 | Procedure Date/Time | TS | R | 26 | 1 | When the procedure was performed |
+| PR1.6 | Procedure Functional Type | IS | O | 2 | 1 | Functional type (Table 0230) |
+| PR1.7 | Procedure Minutes | NM | O | 4 | 1 | Duration in minutes |
+| PR1.8 | Anesthesiologist | XCN | B | 250 | * | Deprecated — anesthesiologist (Table 0010) |
+| PR1.9 | Anesthesia Code | IS | O | 2 | 1 | Anesthesia code (Table 0019) |
+| PR1.10 | Anesthesia Minutes | NM | O | 4 | 1 | Anesthesia duration in minutes |
+| PR1.11 | Surgeon | XCN | B | 250 | * | Deprecated — surgeon (Table 0010) |
+| PR1.12 | Procedure Practitioner | XCN | B | 250 | * | Deprecated — practitioner (Table 0010) |
+| PR1.13 | Consent Code | CE | O | 250 | 1 | Consent code (Table 0059) |
+| PR1.14 | Procedure Priority | ID | O | 2 | 1 | Priority (Table 0418) |
+| PR1.15 | Associated Diagnosis Code | CE | O | 250 | 1 | Associated diagnosis (Table 0051) |
+| PR1.16 | Procedure Code Modifier | CE | O | 250 | * | Procedure modifier (Table 0340) |
+| PR1.17 | Procedure DRG Type | IS | O | 20 | 1 | DRG type (Table 0416) |
+| PR1.18 | Tissue Type Code | CE | O | 250 | * | Tissue type (Table 0417) |
+| PR1.19 | Procedure Identifier | EI | C | 427 | 1 | Unique procedure identifier |
+| PR1.20 | Procedure Action Code | ID | C | 1 | 1 | `A` (add), `D` (delete), `U` (update) (Table 0206) |
+
+### ORC — Common Order (31 fields)
+
+Source: [Caristix HL7v2.5.1 ORC](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/ORC)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| ORC.1 | Order Control | ID | R | 2 | 1 | Order control code: `NW` (new), `CA` (cancel), `DC` (discontinue), `XO` (change), `HD` (hold), `RL` (release hold), `SC` (status changed), `RE` (observations) (Table 0119) |
+| ORC.2 | Placer Order Number | EI | C | 22 | 1 | Order number from placer (comp 1 = entity ID) |
+| ORC.3 | Filler Order Number | EI | C | 22 | 1 | Order number from filler (comp 1 = entity ID) |
+| ORC.4 | Placer Group Number | EI | O | 22 | 1 | Placer group number |
+| ORC.5 | Order Status | ID | O | 2 | 1 | Order status (Table 0038) |
+| ORC.6 | Response Flag | ID | O | 1 | 1 | Response flag (Table 0121) |
+| ORC.7 | Quantity/Timing | TQ | B | 200 | * | Deprecated — use TQ1/TQ2 |
+| ORC.8 | Parent Order | EIP | O | 200 | 1 | Parent order reference |
+| ORC.9 | Date/Time of Transaction | TS | O | 26 | 1 | Transaction datetime |
+| ORC.10 | Entered By | XCN | O | 250 | * | Person who entered the order |
+| ORC.11 | Verified By | XCN | O | 250 | * | Person who verified the order |
+| ORC.12 | Ordering Provider | XCN | O | 250 | * | Ordering clinician (comp 1 = ID, comp 2 = family, comp 3 = given) |
+| ORC.13 | Enterer's Location | PL | O | 80 | 1 | Location where order was entered |
+| ORC.14 | Call Back Phone Number | XTN | O | 250 | 2 | Callback phone |
+| ORC.15 | Order Effective Date/Time | TS | O | 26 | 1 | Order effective datetime |
+| ORC.16 | Order Control Code Reason | CE | O | 250 | 1 | Reason for the order control action |
+| ORC.17 | Entering Organization | CE | O | 250 | 1 | Organization that entered the order |
+| ORC.18 | Entering Device | CE | O | 250 | 1 | Device used to enter the order |
+| ORC.19 | Action By | XCN | O | 250 | * | Person who actioned the order |
+| ORC.20 | Advanced Beneficiary Notice Code | CE | O | 250 | 1 | ABN code (Table 0339) |
+| ORC.21 | Ordering Facility Name | XON | O | 250 | * | Ordering facility name |
+| ORC.22 | Ordering Facility Address | XAD | O | 250 | * | Ordering facility address |
+| ORC.23 | Ordering Facility Phone Number | XTN | O | 250 | * | Ordering facility phone |
+| ORC.24 | Ordering Provider Address | XAD | O | 250 | * | Ordering provider address |
+| ORC.25 | Order Status Modifier | CWE | O | 250 | 1 | Order status modifier |
+| ORC.26 | Advanced Beneficiary Notice Override Reason | CWE | C | 60 | 1 | ABN override reason (Table 0552) |
+| ORC.27 | Filler's Expected Availability Date/Time | TS | O | 26 | 1 | Expected availability datetime |
+| ORC.28 | Confidentiality Code | CWE | O | 250 | 1 | Confidentiality code (Table 0177) |
+| ORC.29 | Order Type | CWE | O | 250 | 1 | Order type (Table 0482) |
+| ORC.30 | Enterer Authorization Mode | CNE | O | 250 | 1 | Authorization mode (Table 0483) |
+| ORC.31 | Parent Universal Service Identifier | CWE | O | 250 | 1 | Parent service identifier |
+
+### OBR — Observation Request (50 fields)
+
+Source: [Caristix HL7v2.5.1 OBR](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/OBR)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| OBR.1 | Set ID - OBR | SI | O | 4 | 1 | Sequence number |
+| OBR.2 | Placer Order Number | EI | C | 22 | 1 | Order number assigned by placer |
+| OBR.3 | Filler Order Number | EI | C | 22 | 1 | Order number assigned by filler |
+| OBR.4 | Universal Service Identifier | CE | R | 250 | 1 | Ordered test (comp 1 = code, comp 2 = text, comp 3 = coding system) |
+| OBR.5 | Priority - OBR | ID | B | 2 | 1 | Deprecated |
+| OBR.6 | Requested Date/Time | TS | B | 26 | 1 | Deprecated |
+| OBR.7 | Observation Date/Time | TS | C | 26 | 1 | Specimen collection / observation datetime |
+| OBR.8 | Observation End Date/Time | TS | O | 26 | 1 | End of observation period |
+| OBR.9 | Collection Volume | CQ | O | 20 | 1 | Specimen volume |
+| OBR.10 | Collector Identifier | XCN | O | 250 | * | Specimen collector |
+| OBR.11 | Specimen Action Code | ID | O | 1 | 1 | Action code |
+| OBR.12 | Danger Code | CE | O | 250 | 1 | Danger/hazard code |
+| OBR.13 | Relevant Clinical Information | ST | O | 300 | 1 | Clinical info for interpretation |
+| OBR.14 | Specimen Received Date/Time | TS | B | 26 | 1 | Deprecated |
+| OBR.15 | Specimen Source | SPS | B | 300 | 1 | Deprecated — use SPM segment |
+| OBR.16 | Ordering Provider | XCN | O | 250 | * | Ordering clinician (comp 1 = ID, comp 2 = family name, comp 3 = given name) |
+| OBR.17 | Order Callback Phone Number | XTN | O | 250 | 2 | Callback phone |
+| OBR.18 | Placer Field 1 | ST | O | 60 | 1 | Placer-defined field |
+| OBR.19 | Placer Field 2 | ST | O | 60 | 1 | Placer-defined field |
+| OBR.20 | Filler Field 1 | ST | O | 60 | 1 | Filler-defined field |
+| OBR.21 | Filler Field 2 | ST | O | 60 | 1 | Filler-defined field |
+| OBR.22 | Results Rpt/Status Chng - Date/Time | TS | C | 26 | 1 | Result report datetime |
+| OBR.23 | Charge to Practice | MOC | O | 40 | 1 | Charge information |
+| OBR.24 | Diagnostic Serv Sect ID | ID | O | 10 | 1 | Diagnostic service section |
+| OBR.25 | Result Status | ID | C | 1 | 1 | `F` (final), `P` (preliminary), `C` (correction), `X` (cancelled), `I` (pending), `S` (partial), `R` (results entered), `O` (order received) |
+| OBR.26 | Parent Result | PRL | O | 400 | 1 | Parent result link |
+| OBR.27 | Quantity/Timing | TQ | B | 200 | * | Deprecated — use TQ1/TQ2 |
+| OBR.28 | Result Copies To | XCN | O | 250 | * | Copy-to recipients |
+| OBR.29 | Parent | EIP | O | 200 | 1 | Parent order reference |
+| OBR.30 | Transportation Mode | ID | O | 20 | 1 | Specimen transport mode |
+| OBR.31 | Reason for Study | CE | O | 250 | * | Reason for study |
+| OBR.32 | Principal Result Interpreter | NDL | O | 200 | 1 | Principal interpreter |
+| OBR.33 | Assistant Result Interpreter | NDL | O | 200 | * | Assistant interpreter |
+| OBR.34 | Technician | NDL | O | 200 | * | Technician |
+| OBR.35 | Transcriptionist | NDL | O | 200 | * | Transcriptionist |
+| OBR.36 | Scheduled Date/Time | TS | O | 26 | 1 | Scheduled datetime |
+| OBR.37 | Number of Sample Containers | NM | O | 4 | 1 | Container count |
+| OBR.38 | Transport Logistics of Collected Sample | CE | O | 250 | * | Transport logistics |
+| OBR.39 | Collector's Comment | CE | O | 250 | * | Collector comments |
+| OBR.40 | Transport Arrangement Responsibility | CE | O | 250 | 1 | Transport responsibility |
+| OBR.41 | Transport Arranged | ID | O | 30 | 1 | Transport status |
+| OBR.42 | Escort Required | ID | O | 1 | 1 | Escort required flag |
+| OBR.43 | Planned Patient Transport Comment | CE | O | 250 | * | Transport comments |
+| OBR.44 | Procedure Code | CE | O | 250 | 1 | Procedure code |
+| OBR.45 | Procedure Code Modifier | CE | O | 250 | * | Procedure modifier |
+| OBR.46 | Placer Supplemental Service Information | CE | O | 250 | * | Placer supplemental info |
+| OBR.47 | Filler Supplemental Service Information | CE | O | 250 | * | Filler supplemental info |
+| OBR.48 | Medically Necessary Duplicate Procedure Reason | CWE | C | 250 | 1 | Duplicate procedure reason |
+| OBR.49 | Result Handling | IS | O | 2 | 1 | Result handling instructions |
+| OBR.50 | Parent Universal Service Identifier | CWE | O | 250 | 1 | Parent service identifier |
+
+### OBX — Observation/Result (25 fields)
+
+Source: [Caristix HL7v2.5.1 OBX](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/OBX)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| OBX.1 | Set ID - OBX | SI | O | 4 | 1 | Sequence number |
+| OBX.2 | Value Type | ID | C | 2 | 1 | `NM` (numeric), `ST` (string), `TX` (text), `CWE` (coded), `SN` (structured numeric), `FT` (formatted text), `ED` (encapsulated data) (Table 0125) |
+| OBX.3 | Observation Identifier | CE | R | 250 | 1 | LOINC or local code (comp 1 = code, comp 2 = display text, comp 3 = coding system) |
+| OBX.4 | Observation Sub-ID | ST | C | 20 | 1 | Sub-identifier for related observations |
+| OBX.5 | Observation Value | VARIES | C | 65536 | * | Result value — type determined by OBX.2 |
+| OBX.6 | Units | CE | O | 250 | 1 | Units of measure (comp 1 = code, comp 2 = text, comp 3 = coding system) |
+| OBX.7 | References Range | ST | O | 60 | 1 | Normal range (e.g. `3.5-5.0`, `>=18`) |
+| OBX.8 | Abnormal Flags | IS | O | 5 | * | `N` (normal), `H` (high), `L` (low), `HH` (critical high), `LL` (critical low), `A` (abnormal) (Table 0078) |
+| OBX.9 | Probability | NM | O | 5 | 1 | Probability (0–1) |
+| OBX.10 | Nature of Abnormal Test | ID | O | 2 | * | Nature of abnormal test (Table 0080) |
+| OBX.11 | Observation Result Status | ID | R | 1 | 1 | `F` (final), `P` (preliminary), `C` (correction), `D` (delete), `I` (pending), `X` (cancelled), `W` (post to wrong patient) (Table 0085) |
+| OBX.12 | Effective Date of Reference Range | TS | O | 26 | 1 | Reference range effective date |
+| OBX.13 | User Defined Access Checks | ST | O | 20 | 1 | Access check code |
+| OBX.14 | Date/Time of the Observation | TS | O | 26 | 1 | Observation datetime |
+| OBX.15 | Producer's ID | CE | O | 250 | 1 | Lab/producer identifier |
+| OBX.16 | Responsible Observer | XCN | O | 250 | * | Responsible clinician |
+| OBX.17 | Observation Method | CE | O | 250 | * | Method used |
+| OBX.18 | Equipment Instance Identifier | EI | O | 22 | * | Equipment ID |
+| OBX.19 | Date/Time of the Analysis | TS | O | 26 | 1 | Analysis datetime |
+| OBX.23 | Performing Organization Name | XON | O | 567 | 1 | Performing lab name |
+| OBX.24 | Performing Organization Address | XAD | O | 631 | 1 | Performing lab address |
+| OBX.25 | Performing Organization Medical Director | XCN | O | 3002 | 1 | Medical director |
+
+> **Note**: OBX.20–OBX.22 are reserved/not used in v2.5.1. Fields jump from OBX.19 to OBX.23.
+
+### NTE — Notes and Comments (4 fields)
+
+Source: [Caristix HL7v2.5.1 NTE](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/NTE)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| NTE.1 | Set ID - NTE | SI | O | 4 | 1 | Sequence number |
+| NTE.2 | Source of Comment | ID | O | 8 | 1 | `L` (ancillary/filler), `P` (orderer/placer), `O` (other) (Table 0105) |
+| NTE.3 | Comment | FT | O | 65536 | * | Free-text comment/note content |
+| NTE.4 | Comment Type | CE | O | 250 | 1 | Comment type (Table 0364) |
+
+### SPM — Specimen (29 fields)
+
+Source: [Caristix HL7v2.5.1 SPM](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/SPM)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| SPM.1 | Set ID - SPM | SI | O | 4 | 1 | Sequence number |
+| SPM.2 | Specimen ID | EIP | O | 80 | 1 | Specimen identifier pair |
+| SPM.3 | Specimen Parent IDs | EIP | O | 80 | * | Parent specimen identifiers |
+| SPM.4 | Specimen Type | CWE | R | 250 | 1 | Specimen type (Table 0487) |
+| SPM.5 | Specimen Type Modifier | CWE | O | 250 | * | Specimen type modifier (Table 0541) |
+| SPM.6 | Specimen Additives | CWE | O | 250 | * | Additives/preservatives (Table 0371) |
+| SPM.7 | Specimen Collection Method | CWE | O | 250 | 1 | Collection method (Table 0488) |
+| SPM.8 | Specimen Source Site | CWE | O | 250 | 1 | Source body site |
+| SPM.9 | Specimen Source Site Modifier | CWE | O | 250 | * | Source site modifier (Table 0542) |
+| SPM.10 | Specimen Collection Site | CWE | O | 250 | 1 | Collection site (Table 0543) |
+| SPM.11 | Specimen Role | CWE | O | 250 | * | Specimen role (Table 0369) |
+| SPM.12 | Specimen Collection Amount | CQ | O | 20 | 1 | Collection amount with units |
+| SPM.13 | Grouped Specimen Count | NM | C | 6 | 1 | Number of grouped specimens |
+| SPM.14 | Specimen Description | ST | O | 250 | * | Free-text specimen description |
+| SPM.15 | Specimen Handling Code | CWE | O | 250 | * | Handling instructions (Table 0376) |
+| SPM.16 | Specimen Risk Code | CWE | O | 250 | * | Risk codes (Table 0489) |
+| SPM.17 | Specimen Collection Date/Time | DR | O | 26 | 1 | Collection date/time range |
+| SPM.18 | Specimen Received Date/Time | TS | O | 26 | 1 | When specimen was received |
+| SPM.19 | Specimen Expiration Date/Time | TS | O | 26 | 1 | Specimen expiration datetime |
+| SPM.20 | Specimen Availability | ID | O | 1 | 1 | Y/N availability (Table 0136) |
+| SPM.21 | Specimen Reject Reason | CWE | O | 250 | * | Reject reason (Table 0490) |
+| SPM.22 | Specimen Quality | CWE | O | 250 | 1 | Quality assessment (Table 0491) |
+| SPM.23 | Specimen Appropriateness | CWE | O | 250 | 1 | Appropriateness assessment (Table 0492) |
+| SPM.24 | Specimen Condition | CWE | O | 250 | * | Specimen condition (Table 0493) |
+| SPM.25 | Specimen Current Quantity | CQ | O | 20 | 1 | Current quantity |
+| SPM.26 | Number of Specimen Containers | NM | O | 4 | 1 | Container count |
+| SPM.27 | Container Type | CWE | O | 250 | 1 | Container type |
+| SPM.28 | Container Condition | CWE | O | 250 | 1 | Container condition (Table 0544) |
+| SPM.29 | Specimen Child Role | CWE | O | 250 | 1 | Child role (Table 0494) |
+
+### IN1 — Insurance (53 fields)
+
+Source: [Caristix HL7v2.5.1 IN1](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/IN1)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| IN1.1 | Set ID - IN1 | SI | R | 4 | 1 | Sequence number |
+| IN1.2 | Insurance Plan ID | CE | R | 250 | 1 | Insurance plan (Table 0072) |
+| IN1.3 | Insurance Company ID | CX | R | 250 | * | Insurance company identifier |
+| IN1.4 | Insurance Company Name | XON | O | 250 | * | Insurance company name |
+| IN1.5 | Insurance Company Address | XAD | O | 250 | * | Insurance company address |
+| IN1.6 | Insurance Co Contact Person | XPN | O | 250 | * | Contact person |
+| IN1.7 | Insurance Co Phone Number | XTN | O | 250 | * | Phone number |
+| IN1.8 | Group Number | ST | O | 12 | 1 | Group/policy group number |
+| IN1.9 | Group Name | XON | O | 250 | * | Group name |
+| IN1.10 | Insured's Group Emp ID | CX | O | 250 | * | Insured's group employer ID |
+| IN1.11 | Insured's Group Emp Name | XON | O | 250 | * | Insured's group employer name |
+| IN1.12 | Plan Effective Date | DT | O | 8 | 1 | Plan effective date |
+| IN1.13 | Plan Expiration Date | DT | O | 8 | 1 | Plan expiration date |
+| IN1.14 | Authorization Information | AUI | O | 239 | 1 | Authorization info |
+| IN1.15 | Plan Type | IS | O | 3 | 1 | Plan type (Table 0086) |
+| IN1.16 | Name Of Insured | XPN | O | 250 | * | Insured person's name |
+| IN1.17 | Insured's Relationship To Patient | CE | O | 250 | 1 | Relationship (Table 0063) |
+| IN1.18 | Insured's Date Of Birth | TS | O | 26 | 1 | Insured's DOB |
+| IN1.19 | Insured's Address | XAD | O | 250 | * | Insured's address |
+| IN1.20 | Assignment Of Benefits | IS | O | 2 | 1 | Assignment of benefits (Table 0135) |
+| IN1.21 | Coordination Of Benefits | IS | O | 2 | 1 | Coordination of benefits (Table 0173) |
+| IN1.22 | Coord Of Ben. Priority | ST | O | 2 | 1 | COB priority |
+| IN1.23 | Notice Of Admission Flag | ID | O | 1 | 1 | Y/N notice of admission (Table 0136) |
+| IN1.24 | Notice Of Admission Date | DT | O | 8 | 1 | Admission notice date |
+| IN1.25 | Report Of Eligibility Flag | ID | O | 1 | 1 | Y/N eligibility report (Table 0136) |
+| IN1.26 | Report Of Eligibility Date | DT | O | 8 | 1 | Eligibility report date |
+| IN1.27 | Release Information Code | IS | O | 2 | 1 | Release info code (Table 0093) |
+| IN1.28 | Pre-Admit Cert (PAC) | ST | O | 15 | 1 | Pre-admission certification |
+| IN1.29 | Verification Date/Time | TS | O | 26 | 1 | Verification datetime |
+| IN1.30 | Verification By | XCN | O | 250 | * | Verified by |
+| IN1.31 | Type Of Agreement Code | IS | O | 2 | 1 | Agreement type (Table 0098) |
+| IN1.32 | Billing Status | IS | O | 2 | 1 | Billing status (Table 0022) |
+| IN1.33 | Lifetime Reserve Days | NM | O | 4 | 1 | Lifetime reserve days |
+| IN1.34 | Delay Before L.R. Day | NM | O | 4 | 1 | Delay before LR day |
+| IN1.35 | Company Plan Code | IS | O | 8 | 1 | Company plan code (Table 0042) |
+| IN1.36 | Policy Number | ST | O | 15 | 1 | Policy number |
+| IN1.37 | Policy Deductible | CP | O | 12 | 1 | Policy deductible amount |
+| IN1.38 | Policy Limit - Amount | CP | O | 12 | 1 | Policy limit amount |
+| IN1.39 | Policy Limit - Days | NM | B | 4 | 1 | Policy limit days |
+| IN1.40 | Room Rate - Semi-Private | CP | B | 12 | 1 | Deprecated — semi-private room rate |
+| IN1.41 | Room Rate - Private | CP | B | 12 | 1 | Deprecated — private room rate |
+| IN1.42 | Insured's Employment Status | CE | O | 250 | 1 | Employment status (Table 0066) |
+| IN1.43 | Insured's Administrative Sex | IS | O | 1 | 1 | Sex (Table 0001) |
+| IN1.44 | Insured's Employer's Address | XAD | O | 250 | * | Employer address |
+| IN1.45 | Verification Status | ST | O | 2 | 1 | Verification status |
+| IN1.46 | Prior Insurance Plan ID | IS | O | 8 | 1 | Prior plan ID (Table 0072) |
+| IN1.47 | Coverage Type | IS | O | 3 | 1 | Coverage type (Table 0309) |
+| IN1.48 | Handicap | IS | O | 2 | 1 | Handicap (Table 0295) |
+| IN1.49 | Insured's ID Number | CX | O | 250 | * | Insured's ID |
+| IN1.50 | Signature Code | IS | O | 1 | 1 | Signature code (Table 0535) |
+| IN1.51 | Signature Code Date | DT | O | 8 | 1 | Signature code date |
+| IN1.52 | Insured's Birth Place | ST | O | 250 | 1 | Insured's birth place |
+| IN1.53 | VIP Indicator | IS | O | 2 | 1 | VIP indicator (Table 0099) |
+
+### GT1 — Guarantor (57 fields)
+
+Source: [Caristix HL7v2.5.1 GT1](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/GT1)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| GT1.1 | Set ID - GT1 | SI | R | 4 | 1 | Sequence number |
+| GT1.2 | Guarantor Number | CX | O | 250 | * | Guarantor identifier |
+| GT1.3 | Guarantor Name | XPN | R | 250 | * | Guarantor name (comp 1 = family, comp 2 = given) |
+| GT1.4 | Guarantor Spouse Name | XPN | O | 250 | * | Spouse name |
+| GT1.5 | Guarantor Address | XAD | O | 250 | * | Guarantor address |
+| GT1.6 | Guarantor Ph Num - Home | XTN | O | 250 | * | Home phone |
+| GT1.7 | Guarantor Ph Num - Business | XTN | O | 250 | * | Business phone |
+| GT1.8 | Guarantor Date/Time Of Birth | TS | O | 26 | 1 | Date of birth |
+| GT1.9 | Guarantor Administrative Sex | IS | O | 1 | 1 | Sex (Table 0001) |
+| GT1.10 | Guarantor Type | IS | O | 2 | 1 | Guarantor type (Table 0068) |
+| GT1.11 | Guarantor Relationship | CE | O | 250 | 1 | Relationship to patient (Table 0063) |
+| GT1.12 | Guarantor SSN | ST | O | 11 | 1 | Social security number |
+| GT1.13 | Guarantor Date - Begin | DT | O | 8 | 1 | Guarantor start date |
+| GT1.14 | Guarantor Date - End | DT | O | 8 | 1 | Guarantor end date |
+| GT1.15 | Guarantor Priority | NM | O | 2 | 1 | Priority |
+| GT1.16 | Guarantor Employer Name | XPN | O | 250 | * | Employer name |
+| GT1.17 | Guarantor Employer Address | XAD | O | 250 | * | Employer address |
+| GT1.18 | Guarantor Employer Phone Number | XTN | O | 250 | * | Employer phone |
+| GT1.19 | Guarantor Employee ID Number | CX | O | 250 | * | Employee ID |
+| GT1.20 | Guarantor Employment Status | IS | O | 2 | 1 | Employment status (Table 0066) |
+| GT1.21 | Guarantor Organization Name | XON | O | 250 | * | Organization name |
+| GT1.22 | Guarantor Billing Hold Flag | ID | O | 1 | 1 | Y/N billing hold (Table 0136) |
+| GT1.23 | Guarantor Credit Rating Code | CE | O | 250 | 1 | Credit rating (Table 0341) |
+| GT1.24 | Guarantor Death Date And Time | TS | O | 26 | 1 | Death datetime |
+| GT1.25 | Guarantor Death Flag | ID | O | 1 | 1 | Y/N death (Table 0136) |
+| GT1.26 | Guarantor Charge Adjustment Code | CE | O | 250 | 1 | Charge adjustment (Table 0218) |
+| GT1.27 | Guarantor Household Annual Income | CP | O | 10 | 1 | Household annual income |
+| GT1.28 | Guarantor Household Size | NM | O | 3 | 1 | Household size |
+| GT1.29 | Guarantor Employer ID Number | CX | O | 250 | * | Employer ID |
+| GT1.30 | Guarantor Marital Status Code | CE | O | 250 | 1 | Marital status (Table 0002) |
+| GT1.31 | Guarantor Hire Effective Date | DT | O | 8 | 1 | Hire date |
+| GT1.32 | Employment Stop Date | DT | O | 8 | 1 | Employment stop date |
+| GT1.33 | Living Dependency | IS | O | 2 | 1 | Living dependency (Table 0223) |
+| GT1.34 | Ambulatory Status | IS | O | 2 | * | Ambulatory status (Table 0009) |
+| GT1.35 | Citizenship | CE | O | 250 | * | Citizenship (Table 0171) |
+| GT1.36 | Primary Language | CE | O | 250 | 1 | Primary language (Table 0296) |
+| GT1.37 | Living Arrangement | IS | O | 2 | 1 | Living arrangement (Table 0220) |
+| GT1.38 | Publicity Code | CE | O | 250 | 1 | Publicity code (Table 0215) |
+| GT1.39 | Protection Indicator | ID | O | 1 | 1 | Y/N protection (Table 0136) |
+| GT1.40 | Student Indicator | IS | O | 2 | 1 | Student status (Table 0231) |
+| GT1.41 | Religion | CE | O | 250 | 1 | Religion (Table 0006) |
+| GT1.42 | Mother's Maiden Name | XPN | O | 250 | * | Mother's maiden name |
+| GT1.43 | Nationality | CE | O | 250 | 1 | Nationality (Table 0212) |
+| GT1.44 | Ethnic Group | CE | O | 250 | * | Ethnic group (Table 0189) |
+| GT1.45 | Contact Person's Name | XPN | O | 250 | * | Contact person name |
+| GT1.46 | Contact Person's Telephone Number | XTN | O | 250 | * | Contact person phone |
+| GT1.47 | Contact Reason | CE | O | 250 | 1 | Contact reason (Table 0222) |
+| GT1.48 | Contact Relationship | IS | O | 3 | 1 | Contact relationship (Table 0063) |
+| GT1.49 | Job Title | ST | O | 20 | 1 | Job title |
+| GT1.50 | Job Code/Class | JCC | O | 20 | 1 | Job code/class |
+| GT1.51 | Guarantor Employer's Organization Name | XON | O | 250 | * | Employer organization |
+| GT1.52 | Handicap | IS | O | 2 | 1 | Handicap (Table 0295) |
+| GT1.53 | Job Status | IS | O | 2 | 1 | Job status (Table 0311) |
+| GT1.54 | Guarantor Financial Class | FC | O | 50 | 1 | Financial class |
+| GT1.55 | Guarantor Race | CE | O | 250 | * | Race (Table 0005) |
+| GT1.56 | Guarantor Birth Place | ST | O | 250 | 1 | Birth place |
+| GT1.57 | VIP Indicator | IS | O | 2 | 1 | VIP indicator (Table 0099) |
+
+### FT1 — Financial Transaction (31 fields)
+
+Source: [Caristix HL7v2.5.1 FT1](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/FT1)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| FT1.1 | Set ID - FT1 | SI | O | 4 | 1 | Sequence number |
+| FT1.2 | Transaction ID | ST | O | 12 | 1 | Unique transaction identifier |
+| FT1.3 | Transaction Batch ID | ST | O | 10 | 1 | Batch identifier |
+| FT1.4 | Transaction Date | DR | R | 53 | 1 | Transaction date/time range |
+| FT1.5 | Transaction Posting Date | TS | O | 26 | 1 | Posting datetime |
+| FT1.6 | Transaction Type | IS | R | 8 | 1 | `CG` (charge), `CR` (credit), `PA` (payment), `AJ` (adjustment) (Table 0017) |
+| FT1.7 | Transaction Code | CE | R | 250 | 1 | Transaction/charge code (Table 0132) |
+| FT1.8 | Transaction Description | ST | B | 40 | 1 | Deprecated — transaction description |
+| FT1.9 | Transaction Description - Alt | ST | B | 40 | 1 | Deprecated — alternate description |
+| FT1.10 | Transaction Quantity | NM | O | 6 | 1 | Quantity |
+| FT1.11 | Transaction Amount - Extended | CP | O | 12 | 1 | Extended amount (quantity × unit price) |
+| FT1.12 | Transaction Amount - Unit | CP | O | 12 | 1 | Unit price |
+| FT1.13 | Department Code | CE | O | 250 | 1 | Department (Table 0049) |
+| FT1.14 | Insurance Plan ID | CE | O | 250 | 1 | Insurance plan (Table 0072) |
+| FT1.15 | Insurance Amount | CP | O | 12 | 1 | Insurance amount |
+| FT1.16 | Assigned Patient Location | PL | O | 80 | 1 | Patient location |
+| FT1.17 | Fee Schedule | IS | O | 1 | 1 | Fee schedule (Table 0024) |
+| FT1.18 | Patient Type | IS | O | 2 | 1 | Patient type (Table 0018) |
+| FT1.19 | Diagnosis Code - FT1 | CE | O | 250 | * | Diagnosis code (Table 0051) |
+| FT1.20 | Performed By Code | XCN | O | 250 | * | Performer (comp 1 = ID, comp 2 = family) (Table 0084) |
+| FT1.21 | Ordered By Code | XCN | O | 250 | * | Ordering provider |
+| FT1.22 | Unit Cost | CP | O | 12 | 1 | Unit cost |
+| FT1.23 | Filler Order Number | EI | O | 427 | 1 | Filler order number |
+| FT1.24 | Entered By Code | XCN | O | 250 | * | Entered by |
+| FT1.25 | Procedure Code | CE | O | 250 | 1 | Procedure code (Table 0088) |
+| FT1.26 | Procedure Code Modifier | CE | O | 250 | * | Procedure modifier (Table 0340) |
+| FT1.27 | Advanced Beneficiary Notice Code | CE | O | 250 | 1 | ABN code (Table 0339) |
+| FT1.28 | Medically Necessary Duplicate Procedure Reason | CWE | O | 250 | 1 | Duplicate procedure reason (Table 0476) |
+| FT1.29 | NDC Code | CNE | O | 250 | 1 | National Drug Code (Table 0549) |
+| FT1.30 | Payment Reference ID | CX | O | 250 | 1 | Payment reference |
+| FT1.31 | Transaction Reference Key | SI | O | 4 | * | Transaction reference key |
+
+### RXA — Pharmacy/Treatment Administration (26 fields)
+
+Source: [Caristix HL7v2.5.1 RXA](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/RXA)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| RXA.1 | Give Sub-ID Counter | NM | R | 4 | 1 | Sub-ID counter |
+| RXA.2 | Administration Sub-ID Counter | NM | R | 4 | 1 | Administration sub-ID counter |
+| RXA.3 | Date/Time Start of Administration | TS | R | 26 | 1 | Administration start datetime |
+| RXA.4 | Date/Time End of Administration | TS | R | 26 | 1 | Administration end datetime |
+| RXA.5 | Administered Code | CE | R | 250 | 1 | Drug/vaccine code (comp 1 = code, comp 2 = text) (Table 0292) |
+| RXA.6 | Administered Amount | NM | R | 20 | 1 | Amount administered |
+| RXA.7 | Administered Units | CE | C | 250 | 1 | Units of measure |
+| RXA.8 | Administered Dosage Form | CE | O | 250 | 1 | Dosage form |
+| RXA.9 | Administration Notes | CE | O | 250 | * | Administration notes |
+| RXA.10 | Administering Provider | XCN | O | 250 | * | Provider who administered (comp 1 = ID) |
+| RXA.11 | Administered-at Location | LA2 | C | 200 | 1 | Administration location |
+| RXA.12 | Administered Per (Time Unit) | ST | C | 20 | 1 | Rate time unit |
+| RXA.13 | Administered Strength | NM | O | 20 | 1 | Strength administered |
+| RXA.14 | Administered Strength Units | CE | O | 250 | 1 | Strength units |
+| RXA.15 | Substance Lot Number | ST | O | 20 | * | Lot number |
+| RXA.16 | Substance Expiration Date | TS | O | 26 | * | Substance expiration date |
+| RXA.17 | Substance Manufacturer Name | CE | O | 250 | * | Manufacturer (Table 0227) |
+| RXA.18 | Substance/Treatment Refusal Reason | CE | O | 250 | * | Refusal reason |
+| RXA.19 | Indication | CE | O | 250 | * | Indication for administration |
+| RXA.20 | Completion Status | ID | O | 2 | 1 | `CP` (complete), `RE` (refused), `NA` (not administered), `PA` (partially administered) (Table 0322) |
+| RXA.21 | Action Code - RXA | ID | O | 2 | 1 | Action code (Table 0323) |
+| RXA.22 | System Entry Date/Time | TS | O | 26 | 1 | System entry datetime |
+| RXA.23 | Administered Drug Strength Volume | NM | O | 5 | 1 | Strength volume |
+| RXA.24 | Administered Drug Strength Volume Units | CWE | O | 250 | 1 | Strength volume units |
+| RXA.25 | Administered Barcode Identifier | CWE | O | 60 | 1 | Barcode identifier |
+| RXA.26 | Pharmacy Order Type | ID | O | 1 | 1 | Order type (Table 0480) |
+
+### SCH — Scheduling Activity Information (27 fields)
+
+Source: [Caristix HL7v2.5.1 SCH](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/SCH)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| SCH.1 | Placer Appointment ID | EI | C | 75 | 1 | Appointment ID from placer (comp 1 = entity ID) |
+| SCH.2 | Filler Appointment ID | EI | C | 75 | 1 | Appointment ID from filler (comp 1 = entity ID) |
+| SCH.3 | Occurrence Number | NM | C | 5 | 1 | Occurrence number |
+| SCH.4 | Placer Group Number | EI | O | 22 | 1 | Placer group number |
+| SCH.5 | Schedule ID | CE | O | 250 | 1 | Schedule identifier |
+| SCH.6 | Event Reason | CE | R | 250 | 1 | Event reason |
+| SCH.7 | Appointment Reason | CE | O | 250 | 1 | Reason for appointment (Table 0276) |
+| SCH.8 | Appointment Type | CE | O | 250 | 1 | Appointment type (Table 0277) |
+| SCH.9 | Appointment Duration | NM | B | 20 | 1 | Deprecated — duration in minutes |
+| SCH.10 | Appointment Duration Units | CE | B | 250 | 1 | Deprecated — duration units |
+| SCH.11 | Appointment Timing Quantity | TQ | B | 200 | * | Deprecated — use TQ1/TQ2 |
+| SCH.12 | Placer Contact Person | XCN | O | 250 | * | Placer contact (comp 1 = ID, comp 2 = family) |
+| SCH.13 | Placer Contact Phone Number | XTN | O | 250 | 1 | Placer phone |
+| SCH.14 | Placer Contact Address | XAD | O | 250 | * | Placer address |
+| SCH.15 | Placer Contact Location | PL | O | 80 | 1 | Placer location |
+| SCH.16 | Filler Contact Person | XCN | R | 250 | * | Filler contact (comp 1 = ID, comp 2 = family) |
+| SCH.17 | Filler Contact Phone Number | XTN | O | 250 | 1 | Filler phone |
+| SCH.18 | Filler Contact Address | XAD | O | 250 | * | Filler address |
+| SCH.19 | Filler Contact Location | PL | O | 80 | 1 | Filler location |
+| SCH.20 | Entered By Person | XCN | R | 250 | * | Person who entered (comp 1 = ID) |
+| SCH.21 | Entered By Phone Number | XTN | O | 250 | * | Entered by phone |
+| SCH.22 | Entered By Location | PL | O | 80 | 1 | Entered by location |
+| SCH.23 | Parent Placer Appointment ID | EI | O | 75 | 1 | Parent placer appointment |
+| SCH.24 | Parent Filler Appointment ID | EI | C | 75 | 1 | Parent filler appointment |
+| SCH.25 | Filler Status Code | CE | O | 250 | 1 | Filler status (Table 0278) |
+| SCH.26 | Placer Order Number | EI | C | 22 | * | Placer order number |
+| SCH.27 | Filler Order Number | EI | C | 22 | * | Filler order number |
+
+### TXA — Transcription Document Header (23 fields)
+
+Source: [Caristix HL7v2.5.1 TXA](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/TXA)
+
+| Position | Name | Data Type | Usage | Max Len | Rpt | Description |
+|---|---|---|---|---|---|---|
+| TXA.1 | Set ID - TXA | SI | R | 4 | 1 | Sequence number |
+| TXA.2 | Document Type | IS | R | 30 | 1 | Document type (Table 0270) |
+| TXA.3 | Document Content Presentation | ID | C | 2 | 1 | Content type (Table 0191) |
+| TXA.4 | Activity Date/Time | TS | O | 26 | 1 | Activity datetime |
+| TXA.5 | Primary Activity Provider Code/Name | XCN | C | 250 | * | Primary provider (comp 1 = ID) |
+| TXA.6 | Origination Date/Time | TS | O | 26 | 1 | Origination datetime |
+| TXA.7 | Transcription Date/Time | TS | C | 26 | 1 | Transcription datetime |
+| TXA.8 | Edit Date/Time | TS | O | 26 | * | Edit datetime |
+| TXA.9 | Originator Code/Name | XCN | O | 250 | * | Originator (comp 1 = ID) |
+| TXA.10 | Assigned Document Authenticator | XCN | O | 250 | * | Assigned authenticator |
+| TXA.11 | Transcriptionist Code/Name | XCN | C | 250 | * | Transcriptionist (comp 1 = ID) |
+| TXA.12 | Unique Document Number | EI | R | 30 | 1 | Unique document identifier |
+| TXA.13 | Parent Document Number | EI | C | 30 | 1 | Parent document identifier |
+| TXA.14 | Placer Order Number | EI | O | 22 | * | Placer order number |
+| TXA.15 | Filler Order Number | EI | O | 22 | 1 | Filler order number |
+| TXA.16 | Unique Document File Name | ST | O | 30 | 1 | Document file name |
+| TXA.17 | Document Completion Status | ID | R | 2 | 1 | `DI` (dictated), `DO` (documented), `IP` (in progress), `IN` (incomplete), `PA` (pre-authenticated), `AU` (authenticated), `LA` (legally authenticated) (Table 0271) |
+| TXA.18 | Document Confidentiality Status | ID | O | 2 | 1 | Confidentiality status (Table 0272) |
+| TXA.19 | Document Availability Status | ID | O | 2 | 1 | Availability status (Table 0273) |
+| TXA.20 | Document Storage Status | ID | O | 2 | 1 | Storage status (Table 0275) |
+| TXA.21 | Document Change Reason | ST | C | 30 | 1 | Reason for document change |
+| TXA.22 | Authentication Person, Time Stamp | PPN | C | 250 | * | Authenticator with timestamp |
+| TXA.23 | Distributed Copies | XCN | O | 250 | * | Recipients of copies |
+
+---
+
+## **Get Object Primary Keys**
+
+Primary keys are **static** — not discoverable via API.
+
+| Table | Primary Key | Description |
+|---|---|---|
+| `msh` | `message_id` | MSH-10 (Message Control ID) — one row per message |
+| `evn` | `message_id` | One EVN per message |
+| `pid` | `message_id` | One PID per message |
+| `pd1` | `message_id` | One PD1 per message |
+| `pv1` | `message_id` | One PV1 per message |
+| `pv2` | `message_id` | One PV2 per message |
+| `nk1` | `message_id`, `set_id` | Multiple NK1 per message (one per contact) |
+| `mrg` | `message_id` | One MRG per message |
+| `al1` | `message_id`, `set_id` | Multiple AL1 per message (one per allergy) |
+| `iam` | `message_id`, `set_id` | Multiple IAM per message (one per adverse reaction) |
+| `dg1` | `message_id`, `set_id` | Multiple DG1 per message (one per diagnosis) |
+| `pr1` | `message_id`, `set_id` | Multiple PR1 per message (one per procedure) |
+| `orc` | `message_id`, `set_id` | Multiple ORC per message (one per order) |
+| `obr` | `message_id`, `set_id` | Multiple OBR per message (e.g. multi-order) |
+| `obx` | `message_id`, `set_id` | Multiple OBX per message (one per result) |
+| `nte` | `message_id`, `set_id` | Multiple NTE per message (one per comment) |
+| `spm` | `message_id`, `set_id` | Multiple SPM per message (one per specimen) |
+| `in1` | `message_id`, `set_id` | Multiple IN1 per message (one per insurance plan) |
+| `gt1` | `message_id`, `set_id` | Multiple GT1 per message (one per guarantor) |
+| `ft1` | `message_id`, `set_id` | Multiple FT1 per message (one per transaction) |
+| `rxa` | `message_id`, `set_id` | Multiple RXA per message (one per administration) |
+| `sch` | `message_id` | One SCH per message |
+| `txa` | `message_id` | One TXA per message |
+
+---
+
+## **Object's Ingestion Type**
+
+All tables use **`append`** ingestion:
+
+- HL7 message files are immutable once written to the volume.
+- The connector tracks new/modified files by **file modification timestamp** (epoch seconds).
+- Files already processed are never re-read.
+- No change feeds, upserts, or deletes — new files always produce new rows.
+
+| Table | Ingestion Type | Cursor | Notes |
+|---|---|---|---|
+| `msh` | `append` | File modification time | One row per message |
+| `evn` | `append` | File modification time | One row per message with EVN |
+| `pid` | `append` | File modification time | One row per message with PID |
+| `pd1` | `append` | File modification time | One row per message with PD1 |
+| `pv1` | `append` | File modification time | One row per message with PV1 |
+| `pv2` | `append` | File modification time | One row per message with PV2 |
+| `nk1` | `append` | File modification time | Multiple rows per message possible |
+| `mrg` | `append` | File modification time | One row per merge message |
+| `al1` | `append` | File modification time | Multiple rows per message possible |
+| `iam` | `append` | File modification time | Multiple rows per message possible |
+| `dg1` | `append` | File modification time | Multiple rows per message possible |
+| `pr1` | `append` | File modification time | Multiple rows per message possible |
+| `orc` | `append` | File modification time | Multiple rows per message possible |
+| `obr` | `append` | File modification time | Multiple rows per message possible |
+| `obx` | `append` | File modification time | 8–50 rows per lab message typical |
+| `nte` | `append` | File modification time | Multiple rows per message possible |
+| `spm` | `append` | File modification time | Multiple rows per message possible |
+| `in1` | `append` | File modification time | Multiple rows per message possible |
+| `gt1` | `append` | File modification time | Multiple rows per message possible |
+| `ft1` | `append` | File modification time | Multiple rows per message possible |
+| `rxa` | `append` | File modification time | Multiple rows per message possible |
+| `sch` | `append` | File modification time | One row per scheduling message |
+| `txa` | `append` | File modification time | One row per document message |
+
+---
+
+## **Read API for Data Retrieval**
+
+The HL7 v2 connector reads data from **files**, not a REST API. This section describes the HL7 v2 message format that the parser must understand.
+
+### HL7 v2 Message Structure
+
+An HL7 v2 message is a series of **segments**, each on its own line:
+
+```
+MSH|^~\&|EPIC|HOSPITAL|LAB|HOSPITAL|20240115120000||ADT^A01^ADT_A01|MSG00001|P|2.5.1
+EVN|A01|20240115120000
+PID|1||MRN12345^^^HOSP^MR||DOE^JOHN^A||19800101|M|||123 MAIN ST^^SPRINGFIELD^IL^62701
+PD1|||SPRINGFIELD MEDICAL^^12345|54321^SMITH^JANE
+PV1|1|I|ICU^101^A|E|||12345^SMITH^JANE|||MED
+PV2||AC|^CHEST PAIN
+NK1|1|DOE^JANE|SPO^SPOUSE||5551234567
+AL1|1|DA|^PENICILLIN|SV|RASH
+DG1|1||I10^Essential hypertension^I10|||A
+IN1|1|BCBS^Blue Cross||BCBS OF IL
+GT1|1||DOE^JOHN||123 MAIN ST^^SPRINGFIELD^IL^62701
+```
+
+### Delimiters
+
+| Delimiter | Character | Position | Description |
+|---|---|---|---|
+| Segment terminator | `\r` (CR) | End of each line | Separates segments |
+| Field separator | `\|` | MSH-1 | Separates fields within a segment |
+| Component separator | `^` | MSH-2 position 1 | Separates components within a field |
+| Repetition separator | `~` | MSH-2 position 2 | Separates repeating field values |
+| Escape character | `\` | MSH-2 position 3 | Escapes special characters |
+| Subcomponent separator | `&` | MSH-2 position 4 | Separates subcomponents within a component |
+
+### File Reading Strategy
+
+1. **List files** in the `volume_path` matching `file_pattern` (default `*.hl7`)
+2. **Filter by cursor** — only process files with modification time > last cursor
+3. **Parse each file**: split on segment terminator (`\r` or `\r\n` or `\n`), identify segment type by first 3 characters
+4. **Extract MSH fields** first (MSH-7 timestamp, MSH-10 message ID, MSH-12 version) — these become common columns for all segment tables
+5. **Multi-message files**: A single file may contain multiple messages (each starting with `MSH`). The parser must detect MSH boundaries.
+6. **Route segments** to appropriate tables based on segment type prefix
+
+### Pagination / Batching
+
+- **Cursor**: File modification timestamp (epoch seconds). After processing, advance cursor to the latest file timestamp.
+- **Batch size**: Configurable via `max_records_per_batch` table option (default 10,000 records).
+- **Deduplication**: Files already seen are tracked and never re-read.
+- **No rate limits**: File reads from Unity Catalog Volumes have no rate limiting.
+
+### Deleted Records
+
+Not applicable. HL7 message files are immutable. There is no delete synchronization — once a message is ingested, it persists in the Delta table.
+
+---
+
+## **Field Type Mapping**
+
+HL7 v2 defines its own data types. The connector maps them to Spark SQL types for Delta table storage.
+
+### Primitive Data Types
+
+| HL7 Type | Name | Spark SQL Type | Description |
+|---|---|---|---|
+| ST | String Data | STRING | Plain text, no components |
+| TX | Text Data | STRING | Free-form text, may contain formatting |
+| FT | Formatted Text | STRING | Text with HL7 formatting commands |
+| NM | Numeric | STRING | Numeric string (may include sign, decimal) |
+| SI | Sequence ID | STRING | Non-negative integer string |
+| ID | Coded Value (HL7 tables) | STRING | Value from an HL7-defined table |
+| IS | Coded Value (user tables) | STRING | Value from a user-defined table |
+| DT | Date | STRING | `YYYY[MM[DD]]` format |
+| TM | Time | STRING | `HH[MM[SS[.SSSS]]][+/-ZZZZ]` format |
+| TS | Time Stamp | STRING | `YYYY[MM[DD[HH[MM[SS[.SSSS]]]]]][+/-ZZZZ]` — parsed from comp 1 |
+| VARIES | Variable | STRING | Type determined at runtime by context (used for OBX-5) |
+
+### Composite Data Types
+
+| HL7 Type | Name | Components | Connector Extraction |
+|---|---|---|---|
+| CE | Coded Element | identifier ^ text ^ coding system ^ alt-id ^ alt-text ^ alt-coding-system | Comp 1 (code), Comp 2 (text), Comp 3 (coding system) |
+| CWE | Coded with Exceptions | Same as CE plus additional components | Same as CE |
+| CNE | Coded with No Exceptions | Same as CE plus additional components | Same as CE |
+| CX | Extended Composite ID | ID ^ check digit ^ check digit scheme ^ assigning authority ^ ID type ^ assigning facility ^ effective date ^ expiration date ^ assigning jurisdiction ^ assigning agency | Comp 1 (ID value) |
+| XPN | Extended Person Name | family ^ given ^ middle ^ suffix ^ prefix ^ degree ^ name type | Comp 1 (family), Comp 2 (given) |
+| XAD | Extended Address | street ^ other ^ city ^ state ^ zip ^ country ^ address type ^ other geographic ^ county ^ census tract ^ address representation | Comp 1 (street), Comp 3 (city), Comp 4 (state), Comp 5 (zip) |
+| XTN | Extended Telecom Number | telephone ^ telecom use ^ telecom equipment ^ email ^ country code ^ area code ^ local number ^ extension ^ any text | Comp 1 (number) or individual components |
+| XCN | Extended Composite ID & Name | ID ^ family ^ given ^ middle ^ suffix ^ prefix ^ degree ^ source table ^ assigning authority ^ name type ^ check digit ^ check digit scheme ^ identifier type ^ assigning facility | Comp 1 (ID), Comp 2 (family), Comp 3 (given) |
+| XON | Extended Composite Name & ID for Orgs | organization name ^ organization name type ^ ID number ^ check digit ^ check digit scheme ^ assigning authority ^ identifier type ^ assigning facility | Comp 1 (organization name) |
+| HD | Hierarchic Designator | namespace ID ^ universal ID ^ universal ID type | Comp 1 (namespace ID) |
+| EI | Entity Identifier | entity ID ^ namespace ID ^ universal ID ^ universal ID type | Comp 1 (entity ID) |
+| EIP | Entity Identifier Pair | placer assigned identifier ^ filler assigned identifier | Comp 1 (placer ID) |
+| PL | Person Location | point of care ^ room ^ bed ^ facility ^ location status ^ person location type ^ building ^ floor | Comp 1 (point of care), Comp 2 (room), Comp 3 (bed) |
+| MSG | Message Type | message code ^ trigger event ^ message structure | Comp 1 (message code), Comp 2 (trigger event) |
+| PT | Processing Type | processing ID ^ processing mode | Comp 1 (processing ID) |
+| VID | Version Identifier | version ID ^ internationalization code ^ international version ID | Comp 1 (version ID) |
+| DR | Date/Time Range | range start datetime ^ range end datetime | Comp 1 (start), Comp 2 (end) |
+| CQ | Composite Quantity with Units | quantity ^ units | Comp 1 (quantity), Comp 2 (units) |
+| CP | Composite Price | price ^ price type ^ from value ^ to value ^ range units ^ range type | Comp 1 (price) |
+| FC | Financial Class | financial class code ^ effective date | Comp 1 (financial class) |
+| AUI | Authorization Information | authorization number ^ date ^ source | Comp 1 (authorization number) |
+| JCC | Job Code/Class | job code ^ job class | Comp 1 (job code), Comp 2 (job class) |
+| PPN | Performing Person Time Stamp | ID ^ family ^ given ^ middle ^ suffix ^ prefix ^ degree ^ source table ^ assigning authority ^ name type ^ check digit ^ check digit scheme ^ identifier type ^ assigning facility ^ date/time action performed | Comp 1 (ID), Comp 15 (datetime) |
+| LA2 | Location with Address Variation 2 | point of care ^ room ^ bed ^ facility ^ location status ^ patient location type ^ building ^ floor ^ street ^ other ^ city ^ state ^ zip ^ country | Comp 1-3 (location), Comp 9-13 (address) |
+| NDL | Name with Date and Location | name ^ start datetime ^ end datetime ^ point of care ^ room ^ bed ^ facility ^ location status ^ patient location type ^ building ^ floor | Comp 1 (name) |
+| DLD | Discharge to Location & Date | discharge to location ^ effective date | Comp 1 (location) |
+| SPS | Specimen Source | specimen source ^ additives ^ specimen collection method ^ body site ^ site modifier ^ collection method modifier ^ specimen role | Comp 1 (source) |
+
+### General Mapping Rule
+
+All HL7 fields are stored as **STRING** in the Delta tables. The connector extracts specific components from composite types (as documented above) and stores them as individual string columns. No type coercion is performed at ingestion time — downstream SQL queries can cast as needed (e.g. `CAST(date_of_birth AS DATE)`).
+
+---
+
+## **Sources and References**
+
+| Source Type | URL | Accessed (UTC) | Confidence | What it confirmed |
+|---|---|---|---|---|
+| User-provided documentation | https://hl7-definition.caristix.com/v2/ | 2026-03-27 | Highest | Primary reference for all segment definitions |
+| Caristix HL7 Definition API — MSH | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/MSH | 2026-03-27 | High | MSH segment: 21 fields, data types, usage, max lengths |
+| Caristix HL7 Definition API — EVN | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/EVN | 2026-03-27 | High | EVN segment: 7 fields, data types, usage |
+| Caristix HL7 Definition API — PID | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/PID | 2026-03-27 | High | PID segment: 39 fields, data types, usage |
+| Caristix HL7 Definition API — PD1 | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/PD1 | 2026-03-27 | High | PD1 segment: 21 fields, data types, usage |
+| Caristix HL7 Definition API — PV1 | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/PV1 | 2026-03-27 | High | PV1 segment: 52 fields, data types, usage |
+| Caristix HL7 Definition API — PV2 | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/PV2 | 2026-03-27 | High | PV2 segment: 49 fields, data types, usage |
+| Caristix HL7 Definition API — NK1 | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/NK1 | 2026-03-27 | High | NK1 segment: 39 fields, data types, usage |
+| Caristix HL7 Definition API — MRG | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/MRG | 2026-03-27 | High | MRG segment: 7 fields, data types, usage |
+| Caristix HL7 Definition API — AL1 | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/AL1 | 2026-03-27 | High | AL1 segment: 6 fields, data types, usage |
+| Caristix HL7 Definition API — IAM | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/IAM | 2026-03-27 | High | IAM segment: 20 fields, data types, usage |
+| Caristix HL7 Definition API — DG1 | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/DG1 | 2026-03-27 | High | DG1 segment: 21 fields, data types, usage |
+| Caristix HL7 Definition API — PR1 | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/PR1 | 2026-03-27 | High | PR1 segment: 20 fields, data types, usage |
+| Caristix HL7 Definition API — ORC | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/ORC | 2026-03-27 | High | ORC segment: 31 fields, data types, usage |
+| Caristix HL7 Definition API — OBR | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/OBR | 2026-03-27 | High | OBR segment: 50 fields, data types, usage |
+| Caristix HL7 Definition API — OBX | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/OBX | 2026-03-27 | High | OBX segment: 25 fields (with gap at 20–22), data types, usage |
+| Caristix HL7 Definition API — NTE | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/NTE | 2026-03-27 | High | NTE segment: 4 fields, data types, usage |
+| Caristix HL7 Definition API — SPM | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/SPM | 2026-03-27 | High | SPM segment: 29 fields, data types, usage |
+| Caristix HL7 Definition API — IN1 | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/IN1 | 2026-03-27 | High | IN1 segment: 53 fields, data types, usage |
+| Caristix HL7 Definition API — GT1 | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/GT1 | 2026-03-27 | High | GT1 segment: 57 fields, data types, usage |
+| Caristix HL7 Definition API — FT1 | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/FT1 | 2026-03-27 | High | FT1 segment: 31 fields, data types, usage |
+| Caristix HL7 Definition API — RXA | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/RXA | 2026-03-27 | High | RXA segment: 26 fields, data types, usage |
+| Caristix HL7 Definition API — SCH | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/SCH | 2026-03-27 | High | SCH segment: 27 fields, data types, usage |
+| Caristix HL7 Definition API — TXA | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/TXA | 2026-03-27 | High | TXA segment: 23 fields, data types, usage |
+| Caristix HL7 Definition API — Segments List | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments | 2026-03-27 | High | Complete list of all HL7 v2.5.1 segments — used to select the 23 most clinically relevant |
+
+### Usage Legend
+
+| Code | Meaning |
+|---|---|
+| R | Required |
+| O | Optional |
+| C | Conditional — required under certain conditions |
+| B | Backward compatible — deprecated, retained for compatibility |

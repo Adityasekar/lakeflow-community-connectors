@@ -7,11 +7,13 @@
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 import json
+import re
+import sys
 
 from pyspark.sql import Row
 from pyspark.sql.datasource import (
@@ -588,12 +590,19 @@ def register_lakeflow_source(spark):
         So ``get_field(n)`` → ``parts[n]``.
         """
 
-        __slots__ = ("segment_type", "_fields", "_enc")
+        __slots__ = ("segment_type", "_fields", "_enc", "raw_line")
 
-        def __init__(self, segment_type: str, fields: list[str], enc: HL7EncodingChars) -> None:
+        def __init__(
+            self,
+            segment_type: str,
+            fields: list[str],
+            enc: HL7EncodingChars,
+            raw_line: str = "",
+        ) -> None:
             self.segment_type = segment_type
             self._fields = fields
             self._enc = enc
+            self.raw_line = raw_line
 
         def get_field(self, n: int, default: str = "") -> str:
             """Return the raw value of field *n* (1-based).
@@ -737,7 +746,7 @@ def register_lakeflow_source(spark):
                 # After splitting by "|", parts[1] = "^~\&" (MSH-2), parts[2] = SendingApp (MSH-3).
                 # Insert the field separator at index 1 so that get_field(N) == MSH-N for all N >= 1.
                 parts.insert(1, field_sep)
-            segments.append(HL7Segment(seg_type, parts, enc))
+            segments.append(HL7Segment(seg_type, parts, enc, line))
 
         if not segments:
             return None
@@ -761,12 +770,35 @@ def register_lakeflow_source(spark):
         return StructField(name, LongType(), nullable=True, metadata=meta)
 
 
+    def _ts(name: str, comment: str = "") -> StructField:
+        """Nullable TimestampType field with an optional Unity Catalog column comment."""
+        meta = {"comment": comment} if comment else {}
+        return StructField(name, TimestampType(), nullable=True, metadata=meta)
+
+
+    def _pk_s(name: str, comment: str = "") -> StructField:
+        """NOT NULL StringType field used as (part of) a primary key.
+
+        NOT NULL is required for Unity Catalog PRIMARY KEY constraints and makes the
+        column visible as a key column in the Catalog Explorer UI.
+        """
+        meta = {"comment": comment} if comment else {}
+        return StructField(name, StringType(), nullable=False, metadata=meta)
+
+
+    def _pk_i(name: str, comment: str = "") -> StructField:
+        """NOT NULL LongType field used as (part of) a composite primary key."""
+        meta = {"comment": comment} if comment else {}
+        return StructField(name, LongType(), nullable=False, metadata=meta)
+
+
     # Fields present in every segment table.
     _METADATA_FIELDS: list[StructField] = [
-        _s("message_id",        "Unique message identifier (MSH-10); primary join key across all segment tables"),
+        _pk_s("message_id",     "Unique message identifier (MSH-10); primary join key across all segment tables"),
         _s("message_timestamp", "Message creation date/time (MSH-7) in HL7 DTM format, e.g. 20240101120000"),
         _s("hl7_version",       "HL7 version string (MSH-12), e.g. 2.5.1"),
         _s("source_file",       "Basename of the source .hl7 file for traceability"),
+        _s("raw_segment",       "Raw pipe-delimited text of this HL7 segment for lossless recovery and debugging"),
     ]
 
     # ---------------------------------------------------------------------------
@@ -779,15 +811,64 @@ def register_lakeflow_source(spark):
             "(sending/receiving application and facility), message type, trigger event, "
             "timestamp, and HL7 version. One row per message."
         ),
+        "evn": (
+            "Event Type — trigger event metadata. Contains the event type code, the date/time "
+            "the event was recorded, the date/time it occurred, the event reason, and the "
+            "operator who initiated the event. One row per message."
+        ),
         "pid": (
             "Patient Identification — core patient demographics. Contains name, date of birth, "
             "sex, medical record number (MRN), address, phone numbers, and insurance account number. "
+            "One row per message."
+        ),
+        "pd1": (
+            "Patient Additional Demographic — supplementary patient data including living will, "
+            "organ donor status, primary care facility, student indicator, and military information. "
             "One row per message."
         ),
         "pv1": (
             "Patient Visit — encounter details. Contains patient class (inpatient/outpatient), "
             "bed location, attending and admitting physician, admit source, discharge disposition, "
             "and admit/discharge timestamps. One row per message."
+        ),
+        "pv2": (
+            "Patient Visit Additional — extended visit details including admit reason, expected "
+            "dates (admit/discharge/surgery), mode of arrival, patient condition, and visit priority. "
+            "One row per message."
+        ),
+        "nk1": (
+            "Next of Kin / Associated Parties — emergency contact or guarantor. Contains "
+            "contact name, relationship to patient, address, phone number, and contact role. "
+            "One row per associated party."
+        ),
+        "mrg": (
+            "Merge Patient Information — prior patient identifiers used in merge/link/unlink events. "
+            "Contains prior MRN, account number, visit number, and patient name. One row per message."
+        ),
+        "al1": (
+            "Patient Allergy — allergy or adverse reaction record. Contains allergen code and "
+            "description, allergy type (drug/food/environmental), reaction, severity, and "
+            "identification date. One row per allergy."
+        ),
+        "iam": (
+            "Patient Adverse Reaction Information — action-code based allergy tracking (newer "
+            "replacement for AL1). Contains allergen, severity, reaction, action code (add/delete/update), "
+            "unique identifier, and clinical status. One row per adverse reaction."
+        ),
+        "dg1": (
+            "Diagnosis — ICD or SNOMED diagnosis with type (A=admitting, W=working, F=final) "
+            "and optional DRG grouping details. Multiple DG1 rows per encounter are common. "
+            "One row per diagnosis."
+        ),
+        "pr1": (
+            "Procedures — surgical, diagnostic, and therapeutic procedures. Contains procedure code "
+            "(CPT/ICD), date/time, duration, anesthesia details, and associated diagnosis. "
+            "One row per procedure."
+        ),
+        "orc": (
+            "Common Order — order control and status information. Contains order control code "
+            "(new/cancel/change), placer and filler order numbers, ordering provider, order status, "
+            "and transaction date/time. One row per order."
         ),
         "obr": (
             "Observation Request — lab or radiology order. Contains the ordered test "
@@ -799,25 +880,44 @@ def register_lakeflow_source(spark):
             "vital sign, or coded observation including value, units, reference range, and "
             "abnormal flag. Multiple OBX rows per OBR (one per result component)."
         ),
-        "al1": (
-            "Patient Allergy — allergy or adverse reaction record. Contains allergen code and "
-            "description, allergy type (drug/food/environmental), reaction, severity, and "
-            "identification date. One row per allergy."
+        "nte": (
+            "Notes and Comments — free-text annotations attached to orders, results, or other "
+            "segments. Contains the comment source, text content, and type. One row per comment."
         ),
-        "dg1": (
-            "Diagnosis — ICD or SNOMED diagnosis with type (A=admitting, W=working, F=final) "
-            "and optional DRG grouping details. Multiple DG1 rows per encounter are common. "
-            "One row per diagnosis."
+        "spm": (
+            "Specimen — specimen type, collection details, handling instructions, and condition. "
+            "Contains specimen identifier, type, source site, collection method, and date/time. "
+            "One row per specimen."
         ),
-        "nk1": (
-            "Next of Kin / Associated Parties — emergency contact or guarantor. Contains "
-            "contact name, relationship to patient, address, phone number, and contact role. "
-            "One row per associated party."
+        "in1": (
+            "Insurance — policy coverage and billing information. Contains insurance plan, company "
+            "name and ID, group number, policy number, insured person details, and plan effective "
+            "dates. One row per insurance plan."
         ),
-        "evn": (
-            "Event Type — trigger event metadata. Contains the event type code, the date/time "
-            "the event was recorded, the date/time it occurred, the event reason, and the "
-            "operator who initiated the event. One row per message."
+        "gt1": (
+            "Guarantor — financially responsible party. Contains guarantor name, address, phone, "
+            "relationship to patient, employer information, and financial class. "
+            "One row per guarantor."
+        ),
+        "ft1": (
+            "Financial Transaction — charges, payments, and adjustments. Contains transaction "
+            "type (charge/credit/payment), code, amount, date, performing provider, and associated "
+            "diagnosis and procedure codes. One row per transaction."
+        ),
+        "rxa": (
+            "Pharmacy/Treatment Administration — medication administration records. Contains "
+            "drug/vaccine code, amount, units, administration date/time, provider, lot number, "
+            "and completion status. One row per administration."
+        ),
+        "sch": (
+            "Scheduling Activity Information — appointment details. Contains placer and filler "
+            "appointment IDs, event reason, appointment type, duration, and contact information "
+            "for placer and filler. One row per scheduling message."
+        ),
+        "txa": (
+            "Transcription Document Header — document metadata and status. Contains document type, "
+            "unique document number, completion status (dictated/authenticated), originator, "
+            "transcriptionist, and authentication details. One row per document message."
         ),
     }
 
@@ -834,7 +934,7 @@ def register_lakeflow_source(spark):
             _s("sending_facility",                 "Facility that sent the message (MSH-4.1)"),
             _s("receiving_application",            "Name/identifier of the intended recipient application (MSH-5.1)"),
             _s("receiving_facility",               "Facility that will receive the message (MSH-6.1)"),
-            _s("message_datetime",                 "Date/time the message was created (MSH-7); same as message_timestamp"),
+            _ts("message_datetime",                "Date/time the message was created (MSH-7); typed version of message_timestamp"),
             _s("security",                         "Security or access-restriction string (MSH-8); rarely populated"),
             _s("message_code",                     "Message code, first component of message type (MSH-9.1), e.g. ADT, ORU, ORM, ACK"),
             _s("trigger_event",                    "Trigger event, second component of message type (MSH-9.2), e.g. A01, A08, R01"),
@@ -881,7 +981,7 @@ def register_lakeflow_source(spark):
             _s("patient_name_suffix",           "Name suffix, e.g. Jr, Sr, III (PID-5.5)"),
             _s("patient_name_prefix",           "Name prefix/title, e.g. Dr, Mr, Ms (PID-5.6)"),
             _s("mothers_maiden_name",           "Mother's maiden family name (PID-6.1)"),
-            _s("date_of_birth",                 "Date of birth in HL7 DTM format YYYYMMDD (PID-7)"),
+            _ts("date_of_birth",                "Date of birth parsed to timestamp (PID-7)"),
             _s("administrative_sex",            "Administrative gender code (PID-8): M=Male, F=Female, O=Other, U=Unknown"),
             _s("patient_alias",                 "Alias name(s) for the patient (PID-9, deprecated in v2.7)"),
             _s("race",                          "Race category code per HL7 table 0005 (PID-10.1)"),
@@ -910,11 +1010,11 @@ def register_lakeflow_source(spark):
             _s("citizenship",                   "Citizenship country code (PID-26.1)"),
             _s("veterans_military_status",      "Veteran or military service status (PID-27.1)"),
             _s("nationality",                   "Nationality code (PID-28.1, deprecated in v2.7)"),
-            _s("patient_death_datetime",        "Date/time of patient death in HL7 DTM format (PID-29)"),
+            _ts("patient_death_datetime",       "Date/time of patient death parsed to timestamp (PID-29)"),
             _s("patient_death_indicator",       "Death indicator: Y=deceased, N=alive (PID-30)"),
             _s("identity_unknown_indicator",    "Whether the patient's identity is unknown: Y or N (PID-31, v2.5+)"),
             _s("identity_reliability_code",     "Code indicating reliability of patient identity, e.g. AL, UA (PID-32, v2.5+)"),
-            _s("last_update_datetime",          "Date/time the patient record was last updated (PID-33, v2.5+)"),
+            _ts("last_update_datetime",         "Date/time the patient record was last updated, parsed to timestamp (PID-33, v2.5+)"),
             _s("last_update_facility",          "Facility where the last update occurred (PID-34.1, v2.5+)"),
             _s("species_code",                  "Species code for veterinary use (PID-35.1, v2.5+)"),
             _s("breed_code",                    "Breed code for veterinary use (PID-36.1, v2.5+)"),
@@ -991,8 +1091,8 @@ def register_lakeflow_source(spark):
             _s("account_status",               "Account status code (PV1-41)"),
             _s("pending_location",             "Bed reserved for a pending admission or transfer (PV1-42)"),
             _s("prior_temporary_location",     "Prior temporary location before the current transfer (PV1-43)"),
-            _s("admit_datetime",               "Date/time of admission in HL7 DTM format (PV1-44)"),
-            _s("discharge_datetime",           "Date/time of discharge in HL7 DTM format (PV1-45)"),
+            _ts("admit_datetime",              "Date/time of admission parsed to timestamp (PV1-44)"),
+            _ts("discharge_datetime",          "Date/time of discharge parsed to timestamp (PV1-45)"),
             _s("current_patient_balance",      "Current outstanding patient balance (PV1-46)"),
             _s("total_charges",                "Total charges for the visit (PV1-47)"),
             _s("total_adjustments",            "Total adjustments applied to the visit charges (PV1-48)"),
@@ -1010,7 +1110,7 @@ def register_lakeflow_source(spark):
     OBR_SCHEMA = StructType(
         _METADATA_FIELDS
         + [
-            _i("set_id",                              "Sequence number of this OBR within the message (OBR-1)"),
+            _pk_i("set_id",                           "Sequence number of this OBR within the message; part of composite primary key (OBR-1)"),
             _s("placer_order_number",                 "Order number assigned by the ordering application (OBR-2.1)"),
             _s("filler_order_number",                 "Order number assigned by the performing lab/radiology (OBR-3.1)"),
             _s("universal_service_identifier",        "Ordered test composite (OBR-4), raw; use service_id / service_text"),
@@ -1018,15 +1118,15 @@ def register_lakeflow_source(spark):
             _s("service_text",                        "Human-readable test name, e.g. Basic Metabolic Panel (OBR-4.2)"),
             _s("service_coding_system",               "Coding system for the test code, e.g. LN=LOINC, CPT4 (OBR-4.3)"),
             _s("priority",                            "Order priority (OBR-5, deprecated in v2.7): R=Routine, S=STAT, A=ASAP"),
-            _s("requested_datetime",                  "Requested date/time for the observation (OBR-6, deprecated in v2.7)"),
-            _s("observation_datetime",                "Date/time specimen was collected or observation started (OBR-7)"),
-            _s("observation_end_datetime",            "Date/time observation ended or specimen collection completed (OBR-8)"),
+            _ts("requested_datetime",                 "Requested date/time for the observation, parsed to timestamp (OBR-6, deprecated in v2.7)"),
+            _ts("observation_datetime",               "Date/time specimen was collected or observation started, parsed to timestamp (OBR-7)"),
+            _ts("observation_end_datetime",           "Date/time observation ended or specimen collection completed, parsed to timestamp (OBR-8)"),
             _s("collection_volume",                   "Volume of specimen collected with units (OBR-9.1)"),
             _s("collector_identifier",                "Person who collected the specimen (OBR-10.1)"),
             _s("specimen_action_code",                "Action to take on the specimen (OBR-11): A=Add, G=Generated, L=Lab, O=Obtained"),
             _s("danger_code",                         "Code indicating a hazardous specimen (OBR-12.1)"),
             _s("relevant_clinical_information",       "Clinical information relevant to the order, e.g. patient condition (OBR-13)"),
-            _s("specimen_received_datetime",          "Date/time the specimen was received by the lab (OBR-14)"),
+            _ts("specimen_received_datetime",         "Date/time the specimen was received by the lab, parsed to timestamp (OBR-14)"),
             _s("specimen_source",                     "Specimen source and collection method (OBR-15, deprecated in v2.7)"),
             _s("ordering_provider",                   "Ordering physician composite (OBR-16), raw; use ordering_provider_* fields"),
             _s("ordering_provider_id",                "Ordering physician identifier/NPI (OBR-16.1)"),
@@ -1037,7 +1137,7 @@ def register_lakeflow_source(spark):
             _s("placer_field_2",                      "Placer-defined field 2 for local use (OBR-19)"),
             _s("filler_field_1",                      "Filler-defined field 1 for local use (OBR-20)"),
             _s("filler_field_2",                      "Filler-defined field 2 for local use (OBR-21)"),
-            _s("results_rpt_status_chng_datetime",    "Date/time the result status last changed (OBR-22)"),
+            _ts("results_rpt_status_chng_datetime",   "Date/time the result status last changed, parsed to timestamp (OBR-22)"),
             _s("charge_to_practice",                  "Charge information for billing purposes (OBR-23)"),
             _s("diagnostic_service_section_id",       "Lab section performing the test, e.g. HM=Hematology, CH=Chemistry (OBR-24)"),
             _s("result_status",                       "Overall result status (OBR-25): F=Final, P=Preliminary, C=Corrected, X=Canceled"),
@@ -1051,7 +1151,7 @@ def register_lakeflow_source(spark):
             _s("assistant_result_interpreter",        "Assistant provider who helped interpret the result (OBR-33.1)"),
             _s("technician",                          "Technician who performed the test (OBR-34.1)"),
             _s("transcriptionist",                    "Person who transcribed the result (OBR-35.1)"),
-            _s("scheduled_datetime",                  "Scheduled date/time for the observation (OBR-36)"),
+            _ts("scheduled_datetime",                 "Scheduled date/time for the observation, parsed to timestamp (OBR-36)"),
             _i("number_of_sample_containers",         "Number of specimen containers required (OBR-37)"),
             _s("transport_logistics",                 "Special instructions for specimen transport (OBR-38.1)"),
             _s("collectors_comment",                  "Comments from the specimen collector (OBR-39.1)"),
@@ -1076,7 +1176,7 @@ def register_lakeflow_source(spark):
     OBX_SCHEMA = StructType(
         _METADATA_FIELDS
         + [
-            _i("set_id",                          "Sequence number of this OBX within the message; identifies the result row (OBX-1)"),
+            _pk_i("set_id",                       "Sequence number of this OBX within the message; part of composite primary key (OBX-1)"),
             _s("value_type",                      "Data type of the observation value (OBX-2): NM=Numeric, ST=String, CWE=Coded, TX=Text, TS=Timestamp"),
             _s("observation_identifier",          "Full observation code composite (OBX-3), raw; use observation_id / observation_text"),
             _s("observation_id",                  "Coded observation identifier, e.g. LOINC code 2951-2 for Sodium (OBX-3.1)"),
@@ -1096,14 +1196,14 @@ def register_lakeflow_source(spark):
             _s("probability",                     "Probability of the observation being correct, 0-1 scale (OBX-9)"),
             _s("nature_of_abnormal_test",         "What the reference range is based on: A=Age, S=Sex, R=Race (OBX-10)"),
             _s("observation_result_status",       "Result status (OBX-11): F=Final, P=Preliminary, C=Corrected, X=Deleted, R=Not yet verified"),
-            _s("effective_date_of_ref_range",     "Date the reference range became effective (OBX-12)"),
+            _ts("effective_date_of_ref_range",    "Date the reference range became effective, parsed to timestamp (OBX-12)"),
             _s("user_defined_access_checks",      "Site-defined access control value (OBX-13)"),
-            _s("datetime_of_observation",         "Date/time this specific observation was made (OBX-14)"),
+            _ts("datetime_of_observation",        "Date/time this specific observation was made, parsed to timestamp (OBX-14)"),
             _s("producers_id",                    "Lab or system that produced the result (OBX-15.1)"),
             _s("responsible_observer",            "Clinician responsible for verifying the result (OBX-16.1)"),
             _s("observation_method",              "Method used to perform the observation, e.g. LOINC method code (OBX-17.1)"),
             _s("equipment_instance_identifier",   "Analyzer or instrument that generated the result (OBX-18.1, v2.5+)"),
-            _s("datetime_of_analysis",            "Date/time the specimen was analyzed on the instrument (OBX-19, v2.5+)"),
+            _ts("datetime_of_analysis",           "Date/time the specimen was analyzed on the instrument, parsed to timestamp (OBX-19, v2.5+)"),
             _s("observation_site",                "Body site where the observation was performed, e.g. LA=Left arm (OBX-20.1, v2.7+)"),
             _s("observation_instance_identifier", "Unique instance identifier for this observation event (OBX-21.1, v2.7+)"),
             _s("mood_code",                       "Mood of the observation: EVN=Event (actual result), INT=Intent (ordered) (OBX-22.1, v2.7+)"),
@@ -1123,7 +1223,7 @@ def register_lakeflow_source(spark):
     AL1_SCHEMA = StructType(
         _METADATA_FIELDS
         + [
-            _i("set_id",                  "Sequence number of this allergy within the message (AL1-1)"),
+            _pk_i("set_id",               "Sequence number of this allergy within the message; part of composite primary key (AL1-1)"),
             _s("allergen_type_code",      "Allergy category (AL1-2.1): DA=Drug, FA=Food, EA=Environmental, MA=Miscellaneous"),
             _s("allergen_code",           "Full allergen composite (AL1-3), raw; use allergen_id / allergen_text"),
             _s("allergen_id",             "Coded allergen identifier, e.g. RxNorm or local drug code (AL1-3.1)"),
@@ -1131,7 +1231,7 @@ def register_lakeflow_source(spark):
             _s("allergen_coding_system",  "Coding system for the allergen code, e.g. RXNORM, LOCAL (AL1-3.3)"),
             _s("allergy_severity_code",   "Severity of the allergic reaction (AL1-4.1): SV=Severe, MO=Moderate, MI=Minor, U=Unknown"),
             _s("allergy_reaction_code",   "Clinical manifestation of the reaction, e.g. HIVES, ANAPHYLAXIS, RASH (AL1-5)"),
-            _s("identification_date",     "Date the allergy was first identified or recorded (AL1-6, deprecated in v2.6)"),
+            _ts("identification_date",    "Date the allergy was first identified or recorded, parsed to timestamp (AL1-6, deprecated in v2.6)"),
         ]
     )
 
@@ -1142,14 +1242,14 @@ def register_lakeflow_source(spark):
     DG1_SCHEMA = StructType(
         _METADATA_FIELDS
         + [
-            _i("set_id",                               "Sequence number of this diagnosis within the message (DG1-1)"),
+            _pk_i("set_id",                            "Sequence number of this diagnosis within the message; part of composite primary key (DG1-1)"),
             _s("diagnosis_coding_method",              "Diagnosis coding method (DG1-2, deprecated in v2.7); use diagnosis_coding_system"),
             _s("diagnosis_code",                       "Full diagnosis code composite (DG1-3), raw; use diagnosis_id / diagnosis_text"),
             _s("diagnosis_id",                         "Coded diagnosis identifier, e.g. ICD-10-CM code J18.9 (DG1-3.1)"),
             _s("diagnosis_text",                       "Human-readable diagnosis description, e.g. Pneumonia, unspecified (DG1-3.2)"),
             _s("diagnosis_coding_system",              "Coding system used, e.g. ICD10CM, ICD9CM, SNOMED (DG1-3.3)"),
             _s("diagnosis_description",                "Free-text diagnosis description (DG1-4, deprecated in v2.7)"),
-            _s("diagnosis_datetime",                   "Date/time the diagnosis was established (DG1-5)"),
+            _ts("diagnosis_datetime",                  "Date/time the diagnosis was established, parsed to timestamp (DG1-5)"),
             _s("diagnosis_type",                       "Diagnosis type (DG1-6): A=Admitting, W=Working, F=Final"),
             _s("major_diagnostic_category",            "CMS Major Diagnostic Category (MDC) code used for DRG grouping (DG1-7.1)"),
             _s("diagnostic_related_group",             "DRG code assigned by the grouper software (DG1-8.1)"),
@@ -1163,7 +1263,7 @@ def register_lakeflow_source(spark):
             _s("diagnosing_clinician",                 "Clinician who established the diagnosis (DG1-16.1)"),
             _s("diagnosis_classification",             "Classification of the diagnosis: C=Chronic, A=Acute (DG1-17)"),
             _s("confidential_indicator",               "Whether the diagnosis is confidential and access-restricted: Y or N (DG1-18)"),
-            _s("attestation_datetime",                 "Date/time the diagnosis was attested by the physician (DG1-19)"),
+            _ts("attestation_datetime",                "Date/time the diagnosis was attested by the physician, parsed to timestamp (DG1-19)"),
             _s("diagnosis_identifier",                 "Unique instance identifier for this diagnosis record (DG1-20.1, v2.5+)"),
             _s("diagnosis_action_code",                "Action to take on this diagnosis: A=Add, U=Update, D=Delete (DG1-21, v2.5+)"),
             _s("parent_diagnosis",                     "Parent diagnosis code for hierarchical grouping (DG1-22.1, v2.6+)"),
@@ -1181,7 +1281,7 @@ def register_lakeflow_source(spark):
     NK1_SCHEMA = StructType(
         _METADATA_FIELDS
         + [
-            _i("set_id",                     "Sequence number of this next-of-kin record within the message (NK1-1)"),
+            _pk_i("set_id",                  "Sequence number of this next-of-kin record within the message; part of composite primary key (NK1-1)"),
             _s("name",                       "Full name composite of the next of kin (NK1-2), raw; use nk_family_name / nk_given_name"),
             _s("nk_family_name",             "Next of kin last/family name (NK1-2.1)"),
             _s("nk_given_name",              "Next of kin first/given name (NK1-2.2)"),
@@ -1193,15 +1293,15 @@ def register_lakeflow_source(spark):
             _s("phone_number",               "Next of kin home or primary telephone number (NK1-5)"),
             _s("business_phone",             "Next of kin business telephone number (NK1-6)"),
             _s("contact_role",               "Role of this contact (NK1-7.1): EC=Emergency Contact, C=Guarantor, N=Next of kin"),
-            _s("start_date",                 "Date this contact relationship became effective (NK1-8)"),
-            _s("end_date",                   "Date this contact relationship ended (NK1-9)"),
+            _ts("start_date",                "Date this contact relationship became effective, parsed to timestamp (NK1-8)"),
+            _ts("end_date",                  "Date this contact relationship ended, parsed to timestamp (NK1-9)"),
             _s("job_title",                  "Next of kin job title or occupation (NK1-10)"),
             _s("job_code",                   "Occupation code for the next of kin (NK1-11.1)"),
             _s("employee_number",            "Employee number of the next of kin (NK1-12.1)"),
             _s("organization_name",          "Organization where the next of kin is employed (NK1-13.1)"),
             _s("marital_status",             "Marital status of the next of kin (NK1-14.1)"),
             _s("administrative_sex",         "Administrative gender of the next of kin: M, F, O, U (NK1-15)"),
-            _s("date_of_birth",              "Date of birth of the next of kin (NK1-16)"),
+            _ts("date_of_birth",             "Date of birth of the next of kin, parsed to timestamp (NK1-16)"),
             _s("living_dependency",          "Living dependency code for the next of kin (NK1-17.1)"),
             _s("ambulatory_status",          "Ambulatory status code of the next of kin (NK1-18.1)"),
             _s("citizenship",                "Citizenship country code of the next of kin (NK1-19.1)"),
@@ -1236,12 +1336,577 @@ def register_lakeflow_source(spark):
         _METADATA_FIELDS
         + [
             _s("event_type_code",          "Event type code (EVN-1, deprecated in v2.5); superseded by MSH-9 trigger event"),
-            _s("recorded_datetime",        "Date/time the event was recorded in the sending system (EVN-2)"),
-            _s("date_time_planned_event",  "Date/time the event was planned to occur, e.g. scheduled surgery time (EVN-3)"),
+            _ts("recorded_datetime",       "Date/time the event was recorded in the sending system, parsed to timestamp (EVN-2)"),
+            _ts("date_time_planned_event", "Date/time the event was planned to occur, parsed to timestamp (EVN-3)"),
             _s("event_reason_code",        "Coded reason the event occurred (EVN-4.1): 01=Patient request, 02=Physician order, 03=Census management"),
             _s("operator_id",              "Identifier of the person who initiated or recorded the event (EVN-5.1)"),
-            _s("event_occurred",           "Actual date/time the event occurred, which may differ from recorded_datetime (EVN-6)"),
+            _ts("event_occurred",          "Actual date/time the event occurred, parsed to timestamp (EVN-6)"),
             _s("event_facility",           "Facility where the event took place (EVN-7.1, v2.5+)"),
+        ]
+    )
+
+    # ---------------------------------------------------------------------------
+    # PD1 — Patient Additional Demographic
+    # ---------------------------------------------------------------------------
+
+    PD1_SCHEMA = StructType(
+        _METADATA_FIELDS
+        + [
+            _s("living_dependency",                        "Living dependency code (PD1-1): S=Spouse, M=Medical Supervision, C=Small Children"),
+            _s("living_arrangement",                       "Living arrangement code (PD1-2): A=Alone, F=Family, I=Institution, R=Relative, U=Unknown"),
+            _s("patient_primary_facility",                 "Primary care facility name (PD1-3.1)"),
+            _s("patient_primary_care_provider",            "Primary care provider identifier (PD1-4.1, deprecated)"),
+            _s("student_indicator",                        "Student status (PD1-5): F=Full-time, P=Part-time, N=Not a student"),
+            _s("handicap",                                 "Handicap code (PD1-6)"),
+            _s("living_will_code",                         "Living will status (PD1-7): Y=Yes, F=Filed with patient, N=No"),
+            _s("organ_donor_code",                         "Organ donor status (PD1-8): Y=Yes, F=Filed with patient, N=No"),
+            _s("separate_bill",                            "Separate billing flag Y/N (PD1-9)"),
+            _s("duplicate_patient",                        "Duplicate patient identifiers (PD1-10.1)"),
+            _s("publicity_code",                           "Publicity/directory listing code (PD1-11.1)"),
+            _s("protection_indicator",                     "Protection indicator Y/N (PD1-12); if Y, patient info is restricted"),
+            _s("protection_indicator_effective_date",      "Date the protection indicator became effective (PD1-13)"),
+            _s("place_of_worship",                         "Place of worship organization name (PD1-14.1)"),
+            _s("advance_directive_code",                   "Advance directive code (PD1-15.1): DNR=Do Not Resuscitate"),
+            _s("immunization_registry_status",             "Immunization registry status (PD1-16): A=Active, I=Inactive, P=Protected"),
+            _s("immunization_registry_status_effective_date", "Immunization registry status effective date (PD1-17)"),
+            _s("publicity_code_effective_date",            "Publicity code effective date (PD1-18)"),
+            _s("military_branch",                          "Military branch (PD1-19): USA=Army, USN=Navy, USAF=Air Force, USMC=Marines"),
+            _s("military_rank_grade",                      "Military rank or grade (PD1-20)"),
+            _s("military_status",                          "Military status (PD1-21): ACT=Active duty, RET=Retired, DEC=Deceased"),
+        ]
+    )
+
+    # ---------------------------------------------------------------------------
+    # PV2 — Patient Visit Additional Information
+    # ---------------------------------------------------------------------------
+
+    PV2_SCHEMA = StructType(
+        _METADATA_FIELDS
+        + [
+            _s("prior_pending_location",                   "Prior pending transfer location (PV2-1)"),
+            _s("accommodation_code",                       "Accommodation code (PV2-2.1)"),
+            _s("admit_reason",                             "Reason for admission (PV2-3.1)"),
+            _s("transfer_reason",                          "Reason for transfer (PV2-4.1)"),
+            _s("patient_valuables",                        "Patient's valuable items description (PV2-5)"),
+            _s("patient_valuables_location",               "Location of patient's valuables (PV2-6)"),
+            _s("visit_user_code",                          "Visit user code (PV2-7)"),
+            _ts("expected_admit_datetime",                 "Expected admission date/time (PV2-8)"),
+            _ts("expected_discharge_datetime",             "Expected discharge date/time (PV2-9)"),
+            _i("estimated_length_of_inpatient_stay",       "Estimated length of inpatient stay in days (PV2-10)"),
+            _i("actual_length_of_inpatient_stay",          "Actual length of inpatient stay in days (PV2-11)"),
+            _s("visit_description",                        "Free-text visit description (PV2-12)"),
+            _s("referral_source_code",                     "Referral source identifier (PV2-13.1)"),
+            _s("previous_service_date",                    "Date of previous service (PV2-14)"),
+            _s("employment_illness_related_indicator",     "Employment illness related Y/N (PV2-15)"),
+            _s("purge_status_code",                        "Purge status code (PV2-16)"),
+            _s("purge_status_date",                        "Purge status date (PV2-17)"),
+            _s("special_program_code",                     "Special program code (PV2-18)"),
+            _s("retention_indicator",                      "Retention indicator Y/N (PV2-19)"),
+            _i("expected_number_of_insurance_plans",       "Expected number of insurance plans (PV2-20)"),
+            _s("visit_publicity_code",                     "Visit publicity code (PV2-21)"),
+            _s("visit_protection_indicator",               "Visit protection indicator Y/N (PV2-22)"),
+            _s("clinic_organization_name",                 "Clinic organization name (PV2-23.1)"),
+            _s("patient_status_code",                      "Patient status code (PV2-24)"),
+            _s("visit_priority_code",                      "Visit priority code (PV2-25)"),
+            _s("previous_treatment_date",                  "Previous treatment date (PV2-26)"),
+            _s("expected_discharge_disposition",            "Expected discharge disposition (PV2-27)"),
+            _s("signature_on_file_date",                   "Signature on file date (PV2-28)"),
+            _s("first_similar_illness_date",               "Date of first similar illness (PV2-29)"),
+            _s("patient_charge_adjustment_code",           "Patient charge adjustment code (PV2-30.1)"),
+            _s("recurring_service_code",                   "Recurring service code (PV2-31)"),
+            _s("billing_media_code",                       "Billing media code Y/N (PV2-32)"),
+            _ts("expected_surgery_datetime",               "Expected surgery date/time (PV2-33)"),
+            _s("military_partnership_code",                "Military partnership code Y/N (PV2-34)"),
+            _s("military_non_availability_code",           "Military non-availability code Y/N (PV2-35)"),
+            _s("newborn_baby_indicator",                   "Newborn baby indicator Y/N (PV2-36)"),
+            _s("baby_detained_indicator",                  "Baby detained indicator Y/N (PV2-37)"),
+            _s("mode_of_arrival_code",                     "Mode of arrival code (PV2-38.1): A=Ambulance, C=Car, F=On foot, H=Helicopter"),
+            _s("recreational_drug_use_code",               "Recreational drug use code (PV2-39.1)"),
+            _s("admission_level_of_care_code",             "Admission level of care code (PV2-40.1)"),
+            _s("precaution_code",                          "Precaution code (PV2-41.1)"),
+            _s("patient_condition_code",                   "Patient condition code (PV2-42.1)"),
+            _s("living_will_code_pv2",                     "Living will code (PV2-43); same values as PD1-7"),
+            _s("organ_donor_code_pv2",                     "Organ donor code (PV2-44); same values as PD1-8"),
+            _s("advance_directive_code_pv2",               "Advance directive code (PV2-45.1)"),
+            _s("patient_status_effective_date",            "Patient status effective date (PV2-46)"),
+            _ts("expected_loa_return_datetime",            "Expected leave of absence return date/time (PV2-47)"),
+            _ts("expected_preadmission_testing_datetime",  "Expected pre-admission testing date/time (PV2-48)"),
+            _s("notify_clergy_code",                       "Notify clergy code (PV2-49)"),
+        ]
+    )
+
+    # ---------------------------------------------------------------------------
+    # MRG — Merge Patient Information
+    # ---------------------------------------------------------------------------
+
+    MRG_SCHEMA = StructType(
+        _METADATA_FIELDS
+        + [
+            _s("prior_patient_identifier_list",   "Prior patient identifier list raw (MRG-1)"),
+            _s("prior_patient_id_value",          "Prior patient ID value (MRG-1.1)"),
+            _s("prior_alternate_patient_id",      "Prior alternate patient ID (MRG-2, deprecated)"),
+            _s("prior_patient_account_number",    "Prior patient account number (MRG-3.1)"),
+            _s("prior_patient_id",                "Prior patient ID (MRG-4.1, deprecated)"),
+            _s("prior_visit_number",              "Prior visit number (MRG-5.1)"),
+            _s("prior_alternate_visit_id",        "Prior alternate visit ID (MRG-6.1)"),
+            _s("prior_patient_name",              "Prior patient name raw (MRG-7)"),
+            _s("prior_patient_family_name",       "Prior patient family name (MRG-7.1)"),
+            _s("prior_patient_given_name",        "Prior patient given name (MRG-7.2)"),
+        ]
+    )
+
+    # ---------------------------------------------------------------------------
+    # IAM — Patient Adverse Reaction Information
+    # ---------------------------------------------------------------------------
+
+    IAM_SCHEMA = StructType(
+        _METADATA_FIELDS
+        + [
+            _pk_i("set_id",                          "Sequence number for this IAM segment within the message (IAM-1)"),
+            _s("allergen_type_code",                  "Allergen type (IAM-2.1): DA=Drug, FA=Food, EA=Environmental, MA=Miscellaneous"),
+            _s("allergen_code",                       "Allergen code/mnemonic/description raw (IAM-3)"),
+            _s("allergen_id",                         "Allergen identifier code (IAM-3.1)"),
+            _s("allergen_text",                       "Allergen display text (IAM-3.2)"),
+            _s("allergen_coding_system",              "Allergen coding system (IAM-3.3)"),
+            _s("allergy_severity_code",               "Allergy severity (IAM-4.1): SV=Severe, MO=Moderate, MI=Mild, U=Unknown"),
+            _s("allergy_reaction_code",               "Allergy reaction description (IAM-5)"),
+            _s("allergy_action_code",                 "Action code (IAM-6.1): A=Add, D=Delete, U=Update"),
+            _s("allergy_unique_identifier",           "Unique allergy identifier (IAM-7.1)"),
+            _s("action_reason",                       "Reason for the action (IAM-8)"),
+            _s("sensitivity_to_causative_agent_code", "Sensitivity code (IAM-9.1)"),
+            _s("allergen_group_code",                 "Allergen group code (IAM-10.1)"),
+            _s("allergen_group_text",                 "Allergen group text (IAM-10.2)"),
+            _s("onset_date",                          "Allergy onset date (IAM-11)"),
+            _s("onset_date_text",                     "Free-text onset date description (IAM-12)"),
+            _ts("reported_datetime",                  "When the allergy was reported (IAM-13)"),
+            _s("reported_by",                         "Person who reported the allergy raw (IAM-14)"),
+            _s("reported_by_family_name",             "Reporter family name (IAM-14.1)"),
+            _s("reported_by_given_name",              "Reporter given name (IAM-14.2)"),
+            _s("relationship_to_patient_code",        "Reporter's relationship to patient (IAM-15.1)"),
+            _s("alert_device_code",                   "Alert device code (IAM-16.1)"),
+            _s("allergy_clinical_status_code",        "Clinical status (IAM-17.1): A=Active, I=Inactive, R=Resolved"),
+            _s("statused_by_person",                  "Person who set the status (IAM-18.1)"),
+            _s("statused_by_organization",            "Organization that set the status (IAM-19.1)"),
+            _ts("statused_at_datetime",               "Date/time status was set (IAM-20)"),
+        ]
+    )
+
+    # ---------------------------------------------------------------------------
+    # PR1 — Procedures
+    # ---------------------------------------------------------------------------
+
+    PR1_SCHEMA = StructType(
+        _METADATA_FIELDS
+        + [
+            _pk_i("set_id",                    "Sequence number for this PR1 segment within the message (PR1-1)"),
+            _s("procedure_coding_method",      "Procedure coding method (PR1-2, deprecated)"),
+            _s("procedure_code",               "Procedure code raw (PR1-3)"),
+            _s("procedure_id",                 "CPT/ICD procedure code (PR1-3.1)"),
+            _s("procedure_text",               "Procedure display text (PR1-3.2)"),
+            _s("procedure_coding_system",      "Procedure coding system (PR1-3.3)"),
+            _s("procedure_description",        "Procedure description (PR1-4, deprecated)"),
+            _ts("procedure_datetime",          "When the procedure was performed (PR1-5)"),
+            _s("procedure_functional_type",    "Functional type (PR1-6): A=Anesthesia, P=Procedure, I=Invasion"),
+            _i("procedure_minutes",            "Duration of the procedure in minutes (PR1-7)"),
+            _s("anesthesiologist",             "Anesthesiologist identifier (PR1-8.1, deprecated)"),
+            _s("anesthesia_code",              "Anesthesia code (PR1-9)"),
+            _i("anesthesia_minutes",           "Anesthesia duration in minutes (PR1-10)"),
+            _s("surgeon",                      "Surgeon identifier (PR1-11.1, deprecated)"),
+            _s("procedure_practitioner",       "Procedure practitioner identifier (PR1-12.1, deprecated)"),
+            _s("consent_code",                 "Consent code (PR1-13.1)"),
+            _s("procedure_priority",           "Procedure priority (PR1-14)"),
+            _s("associated_diagnosis_code",    "Associated diagnosis code (PR1-15.1)"),
+            _s("procedure_code_modifier",      "Procedure modifier code (PR1-16.1)"),
+            _s("procedure_drg_type",           "DRG type (PR1-17)"),
+            _s("tissue_type_code",             "Tissue type code (PR1-18.1)"),
+            _s("procedure_identifier",         "Unique procedure identifier (PR1-19.1)"),
+            _s("procedure_action_code",        "Action code (PR1-20): A=Add, D=Delete, U=Update"),
+        ]
+    )
+
+    # ---------------------------------------------------------------------------
+    # ORC — Common Order
+    # ---------------------------------------------------------------------------
+
+    ORC_SCHEMA = StructType(
+        _METADATA_FIELDS
+        + [
+            _pk_i("set_id",                               "Synthetic sequence number for multiple ORC segments per message"),
+            _s("order_control",                            "Order control code (ORC-1): NW=New, CA=Cancel, DC=Discontinue, XO=Change, SC=Status"),
+            _s("placer_order_number",                      "Order number from the placer system (ORC-2.1)"),
+            _s("filler_order_number",                      "Order number from the filler system (ORC-3.1)"),
+            _s("placer_group_number",                      "Placer group number (ORC-4.1)"),
+            _s("order_status",                             "Order status (ORC-5): IP=In Process, CM=Completed, SC=Scheduled, CA=Cancelled"),
+            _s("response_flag",                            "Response flag (ORC-6): E=Report exceptions, R=Same as initiation, D=Deferred, N=Notification"),
+            _s("quantity_timing",                          "Quantity/timing (ORC-7, deprecated)"),
+            _s("parent_order",                             "Parent order reference (ORC-8)"),
+            _ts("datetime_of_transaction",                 "Transaction date/time (ORC-9)"),
+            _s("entered_by",                               "Person who entered the order (ORC-10.1)"),
+            _s("verified_by",                              "Person who verified the order (ORC-11.1)"),
+            _s("ordering_provider",                        "Ordering provider raw (ORC-12)"),
+            _s("ordering_provider_id",                     "Ordering provider identifier (ORC-12.1)"),
+            _s("ordering_provider_family_name",            "Ordering provider family name (ORC-12.2)"),
+            _s("ordering_provider_given_name",             "Ordering provider given name (ORC-12.3)"),
+            _s("enterers_location",                        "Location where order was entered (ORC-13)"),
+            _s("call_back_phone_number",                   "Callback phone number (ORC-14)"),
+            _ts("order_effective_datetime",                "Order effective date/time (ORC-15)"),
+            _s("order_control_code_reason",                "Reason for the order control action (ORC-16.1)"),
+            _s("entering_organization",                    "Organization that entered the order (ORC-17.1)"),
+            _s("entering_device",                          "Device used to enter the order (ORC-18.1)"),
+            _s("action_by",                                "Person who actioned the order (ORC-19.1)"),
+            _s("advanced_beneficiary_notice_code",         "ABN code (ORC-20.1)"),
+            _s("ordering_facility_name",                   "Ordering facility name (ORC-21.1)"),
+            _s("ordering_facility_address",                "Ordering facility address (ORC-22)"),
+            _s("ordering_facility_phone",                  "Ordering facility phone (ORC-23)"),
+            _s("ordering_provider_address",                "Ordering provider address (ORC-24)"),
+            _s("order_status_modifier",                    "Order status modifier (ORC-25.1)"),
+            _s("abn_override_reason",                      "ABN override reason (ORC-26.1)"),
+            _ts("fillers_expected_availability_datetime",  "Filler's expected availability date/time (ORC-27)"),
+            _s("confidentiality_code",                     "Confidentiality code (ORC-28.1)"),
+            _s("order_type",                               "Order type (ORC-29.1)"),
+            _s("enterer_authorization_mode",               "Enterer authorization mode (ORC-30.1)"),
+            _s("parent_universal_service_id",              "Parent universal service identifier (ORC-31.1)"),
+        ]
+    )
+
+    # ---------------------------------------------------------------------------
+    # NTE — Notes and Comments
+    # ---------------------------------------------------------------------------
+
+    NTE_SCHEMA = StructType(
+        _METADATA_FIELDS
+        + [
+            _pk_i("set_id",            "Sequence number for this NTE segment within the message (NTE-1)"),
+            _s("source_of_comment",    "Source of comment (NTE-2): L=Ancillary/Filler, P=Orderer/Placer, O=Other"),
+            _s("comment",              "Free-text comment/note content (NTE-3); may contain formatted text"),
+            _s("comment_type",         "Comment type code (NTE-4.1)"),
+        ]
+    )
+
+    # ---------------------------------------------------------------------------
+    # SPM — Specimen
+    # ---------------------------------------------------------------------------
+
+    SPM_SCHEMA = StructType(
+        _METADATA_FIELDS
+        + [
+            _pk_i("set_id",                      "Sequence number for this SPM segment within the message (SPM-1)"),
+            _s("specimen_id",                     "Specimen identifier (SPM-2.1)"),
+            _s("specimen_parent_ids",             "Parent specimen identifiers (SPM-3.1)"),
+            _s("specimen_type",                   "Specimen type raw (SPM-4)"),
+            _s("specimen_type_code",              "Specimen type code (SPM-4.1)"),
+            _s("specimen_type_text",              "Specimen type text (SPM-4.2)"),
+            _s("specimen_type_modifier",          "Specimen type modifier (SPM-5.1)"),
+            _s("specimen_additives",              "Specimen additives/preservatives (SPM-6.1)"),
+            _s("specimen_collection_method",      "Collection method (SPM-7.1)"),
+            _s("specimen_source_site",            "Source body site (SPM-8.1)"),
+            _s("specimen_source_site_modifier",   "Source site modifier (SPM-9.1)"),
+            _s("specimen_collection_site",        "Collection site (SPM-10.1)"),
+            _s("specimen_role",                   "Specimen role (SPM-11.1)"),
+            _s("specimen_collection_amount",      "Collection amount with units (SPM-12.1)"),
+            _i("grouped_specimen_count",          "Number of grouped specimens (SPM-13)"),
+            _s("specimen_description",            "Free-text specimen description (SPM-14)"),
+            _s("specimen_handling_code",          "Handling instructions code (SPM-15.1)"),
+            _s("specimen_risk_code",              "Risk code (SPM-16.1)"),
+            _s("specimen_collection_datetime",    "Specimen collection date/time range start (SPM-17.1)"),
+            _ts("specimen_received_datetime",     "When specimen was received (SPM-18)"),
+            _ts("specimen_expiration_datetime",   "Specimen expiration date/time (SPM-19)"),
+            _s("specimen_availability",           "Specimen availability Y/N (SPM-20)"),
+            _s("specimen_reject_reason",          "Reject reason code (SPM-21.1)"),
+            _s("specimen_quality",                "Quality assessment code (SPM-22.1)"),
+            _s("specimen_appropriateness",        "Appropriateness assessment code (SPM-23.1)"),
+            _s("specimen_condition",              "Specimen condition code (SPM-24.1)"),
+            _s("specimen_current_quantity",       "Current specimen quantity (SPM-25.1)"),
+            _i("number_of_specimen_containers",   "Number of specimen containers (SPM-26)"),
+            _s("container_type",                  "Container type (SPM-27.1)"),
+            _s("container_condition",             "Container condition (SPM-28.1)"),
+            _s("specimen_child_role",             "Specimen child role (SPM-29.1)"),
+        ]
+    )
+
+    # ---------------------------------------------------------------------------
+    # IN1 — Insurance
+    # ---------------------------------------------------------------------------
+
+    IN1_SCHEMA = StructType(
+        _METADATA_FIELDS
+        + [
+            _pk_i("set_id",                       "Sequence number for this IN1 segment within the message (IN1-1)"),
+            _s("insurance_plan_id",                "Insurance plan identifier code (IN1-2.1)"),
+            _s("insurance_plan_text",              "Insurance plan display text (IN1-2.2)"),
+            _s("insurance_company_id",             "Insurance company identifier (IN1-3.1)"),
+            _s("insurance_company_name",           "Insurance company name (IN1-4.1)"),
+            _s("insurance_company_address",        "Insurance company address (IN1-5)"),
+            _s("insurance_co_contact_person",      "Contact person at insurance company (IN1-6.1)"),
+            _s("insurance_co_phone_number",        "Insurance company phone number (IN1-7)"),
+            _s("group_number",                     "Insurance group/policy group number (IN1-8)"),
+            _s("group_name",                       "Insurance group name (IN1-9.1)"),
+            _s("insureds_group_emp_id",            "Insured's group employer identifier (IN1-10.1)"),
+            _s("insureds_group_emp_name",          "Insured's group employer name (IN1-11.1)"),
+            _s("plan_effective_date",              "Plan effective date (IN1-12)"),
+            _s("plan_expiration_date",             "Plan expiration date (IN1-13)"),
+            _s("authorization_information",        "Authorization information (IN1-14.1)"),
+            _s("plan_type",                        "Plan type (IN1-15)"),
+            _s("name_of_insured",                  "Insured person's name raw (IN1-16)"),
+            _s("name_of_insured_family",           "Insured person's family name (IN1-16.1)"),
+            _s("name_of_insured_given",            "Insured person's given name (IN1-16.2)"),
+            _s("insureds_relationship_to_patient", "Relationship to patient code (IN1-17.1)"),
+            _ts("insureds_date_of_birth",          "Insured's date of birth (IN1-18)"),
+            _s("insureds_address",                 "Insured's address (IN1-19)"),
+            _s("assignment_of_benefits",           "Assignment of benefits (IN1-20)"),
+            _s("coordination_of_benefits",         "Coordination of benefits (IN1-21)"),
+            _s("coord_of_ben_priority",            "COB priority (IN1-22)"),
+            _s("notice_of_admission_flag",         "Notice of admission flag Y/N (IN1-23)"),
+            _s("notice_of_admission_date",         "Admission notice date (IN1-24)"),
+            _s("report_of_eligibility_flag",       "Eligibility report flag Y/N (IN1-25)"),
+            _s("report_of_eligibility_date",       "Eligibility report date (IN1-26)"),
+            _s("release_information_code",         "Release info code (IN1-27)"),
+            _s("pre_admit_cert",                   "Pre-admission certification number (IN1-28)"),
+            _ts("verification_datetime",           "Verification date/time (IN1-29)"),
+            _s("verification_by",                  "Verified by person (IN1-30.1)"),
+            _s("type_of_agreement_code",           "Agreement type (IN1-31)"),
+            _s("billing_status",                   "Billing status (IN1-32)"),
+            _i("lifetime_reserve_days",            "Lifetime reserve days (IN1-33)"),
+            _i("delay_before_lr_day",              "Delay before lifetime reserve day (IN1-34)"),
+            _s("company_plan_code",                "Company plan code (IN1-35)"),
+            _s("policy_number",                    "Policy number (IN1-36)"),
+            _s("policy_deductible",                "Policy deductible amount (IN1-37.1)"),
+            _s("policy_limit_amount",              "Policy limit amount (IN1-38.1)"),
+            _i("policy_limit_days",                "Policy limit in days (IN1-39)"),
+            _s("room_rate_semi_private",           "Semi-private room rate (IN1-40.1, deprecated)"),
+            _s("room_rate_private",                "Private room rate (IN1-41.1, deprecated)"),
+            _s("insureds_employment_status",       "Insured's employment status (IN1-42.1)"),
+            _s("insureds_administrative_sex",      "Insured's sex (IN1-43): M=Male, F=Female"),
+            _s("insureds_employers_address",       "Insured's employer address (IN1-44)"),
+            _s("verification_status",              "Verification status (IN1-45)"),
+            _s("prior_insurance_plan_id",          "Prior insurance plan ID (IN1-46)"),
+            _s("coverage_type",                    "Coverage type (IN1-47)"),
+            _s("handicap",                         "Handicap code (IN1-48)"),
+            _s("insureds_id_number",               "Insured's identifier (IN1-49.1)"),
+            _s("signature_code",                   "Signature code (IN1-50)"),
+            _s("signature_code_date",              "Signature code date (IN1-51)"),
+            _s("insureds_birth_place",             "Insured's birth place (IN1-52)"),
+            _s("vip_indicator",                    "VIP indicator (IN1-53)"),
+        ]
+    )
+
+    # ---------------------------------------------------------------------------
+    # GT1 — Guarantor
+    # ---------------------------------------------------------------------------
+
+    GT1_SCHEMA = StructType(
+        _METADATA_FIELDS
+        + [
+            _pk_i("set_id",                           "Sequence number for this GT1 segment within the message (GT1-1)"),
+            _s("guarantor_number",                     "Guarantor identifier (GT1-2.1)"),
+            _s("guarantor_name",                       "Guarantor name raw (GT1-3)"),
+            _s("guarantor_family_name",                "Guarantor family name (GT1-3.1)"),
+            _s("guarantor_given_name",                 "Guarantor given name (GT1-3.2)"),
+            _s("guarantor_spouse_name",                "Guarantor spouse name (GT1-4.1)"),
+            _s("guarantor_address",                    "Guarantor address (GT1-5)"),
+            _s("guarantor_ph_num_home",                "Guarantor home phone (GT1-6)"),
+            _s("guarantor_ph_num_business",            "Guarantor business phone (GT1-7)"),
+            _ts("guarantor_date_of_birth",             "Guarantor date of birth (GT1-8)"),
+            _s("guarantor_administrative_sex",         "Guarantor sex (GT1-9): M=Male, F=Female"),
+            _s("guarantor_type",                       "Guarantor type (GT1-10)"),
+            _s("guarantor_relationship",               "Guarantor relationship to patient (GT1-11.1)"),
+            _s("guarantor_ssn",                        "Guarantor social security number (GT1-12)"),
+            _s("guarantor_date_begin",                 "Guarantor start date (GT1-13)"),
+            _s("guarantor_date_end",                   "Guarantor end date (GT1-14)"),
+            _i("guarantor_priority",                   "Guarantor priority (GT1-15)"),
+            _s("guarantor_employer_name",              "Guarantor employer name (GT1-16.1)"),
+            _s("guarantor_employer_address",           "Guarantor employer address (GT1-17)"),
+            _s("guarantor_employer_phone_number",      "Guarantor employer phone (GT1-18)"),
+            _s("guarantor_employee_id_number",         "Guarantor employee ID (GT1-19.1)"),
+            _s("guarantor_employment_status",          "Guarantor employment status (GT1-20)"),
+            _s("guarantor_organization_name",          "Guarantor organization name (GT1-21.1)"),
+            _s("guarantor_billing_hold_flag",          "Billing hold flag Y/N (GT1-22)"),
+            _s("guarantor_credit_rating_code",         "Credit rating code (GT1-23.1)"),
+            _ts("guarantor_death_date_and_time",       "Guarantor death date/time (GT1-24)"),
+            _s("guarantor_death_flag",                 "Guarantor death flag Y/N (GT1-25)"),
+            _s("guarantor_charge_adjustment_code",     "Charge adjustment code (GT1-26.1)"),
+            _s("guarantor_household_annual_income",    "Household annual income (GT1-27.1)"),
+            _i("guarantor_household_size",             "Household size (GT1-28)"),
+            _s("guarantor_employer_id_number",         "Guarantor employer ID (GT1-29.1)"),
+            _s("guarantor_marital_status_code",        "Guarantor marital status (GT1-30.1)"),
+            _s("guarantor_hire_effective_date",        "Guarantor hire date (GT1-31)"),
+            _s("employment_stop_date",                 "Employment stop date (GT1-32)"),
+            _s("living_dependency",                    "Living dependency (GT1-33)"),
+            _s("ambulatory_status",                    "Ambulatory status (GT1-34)"),
+            _s("citizenship",                          "Citizenship (GT1-35.1)"),
+            _s("primary_language",                     "Primary language (GT1-36.1)"),
+            _s("living_arrangement",                   "Living arrangement (GT1-37)"),
+            _s("publicity_code",                       "Publicity code (GT1-38.1)"),
+            _s("protection_indicator",                 "Protection indicator Y/N (GT1-39)"),
+            _s("student_indicator",                    "Student status (GT1-40)"),
+            _s("religion",                             "Religion (GT1-41.1)"),
+            _s("mothers_maiden_name",                  "Mother's maiden name (GT1-42.1)"),
+            _s("nationality",                          "Nationality (GT1-43.1)"),
+            _s("ethnic_group",                         "Ethnic group (GT1-44.1)"),
+            _s("contact_persons_name",                 "Contact person name (GT1-45.1)"),
+            _s("contact_persons_telephone_number",     "Contact person phone (GT1-46)"),
+            _s("contact_reason",                       "Contact reason (GT1-47.1)"),
+            _s("contact_relationship",                 "Contact relationship (GT1-48)"),
+            _s("job_title",                            "Job title (GT1-49)"),
+            _s("job_code_class",                       "Job code/class (GT1-50.1)"),
+            _s("guarantor_employers_org_name",         "Guarantor employer's org name (GT1-51.1)"),
+            _s("handicap",                             "Handicap code (GT1-52)"),
+            _s("job_status",                           "Job status (GT1-53)"),
+            _s("guarantor_financial_class",            "Financial class (GT1-54.1)"),
+            _s("guarantor_race",                       "Guarantor race (GT1-55.1)"),
+            _s("guarantor_birth_place",                "Guarantor birth place (GT1-56)"),
+            _s("vip_indicator",                        "VIP indicator (GT1-57)"),
+        ]
+    )
+
+    # ---------------------------------------------------------------------------
+    # FT1 — Financial Transaction
+    # ---------------------------------------------------------------------------
+
+    FT1_SCHEMA = StructType(
+        _METADATA_FIELDS
+        + [
+            _pk_i("set_id",                              "Sequence number for this FT1 segment within the message (FT1-1)"),
+            _s("transaction_id",                          "Unique transaction identifier (FT1-2)"),
+            _s("transaction_batch_id",                    "Batch identifier (FT1-3)"),
+            _s("transaction_date",                        "Transaction date/time range start (FT1-4.1)"),
+            _ts("transaction_posting_date",               "Posting date/time (FT1-5)"),
+            _s("transaction_type",                        "Transaction type (FT1-6): CG=Charge, CR=Credit, PA=Payment, AJ=Adjustment"),
+            _s("transaction_code",                        "Transaction/charge code raw (FT1-7)"),
+            _s("transaction_code_id",                     "Transaction code identifier (FT1-7.1)"),
+            _s("transaction_code_text",                   "Transaction code text (FT1-7.2)"),
+            _s("transaction_description",                 "Transaction description (FT1-8, deprecated)"),
+            _s("transaction_description_alt",             "Alternate transaction description (FT1-9, deprecated)"),
+            _i("transaction_quantity",                    "Transaction quantity (FT1-10)"),
+            _s("transaction_amount_extended",             "Extended amount: quantity x unit price (FT1-11.1)"),
+            _s("transaction_amount_unit",                 "Unit price (FT1-12.1)"),
+            _s("department_code",                         "Department code (FT1-13.1)"),
+            _s("insurance_plan_id",                       "Insurance plan identifier (FT1-14.1)"),
+            _s("insurance_amount",                        "Insurance amount (FT1-15.1)"),
+            _s("assigned_patient_location",               "Patient location (FT1-16)"),
+            _s("fee_schedule",                            "Fee schedule (FT1-17)"),
+            _s("patient_type",                            "Patient type (FT1-18)"),
+            _s("diagnosis_code",                          "Diagnosis code (FT1-19.1)"),
+            _s("performed_by_code",                       "Performer identifier (FT1-20.1)"),
+            _s("ordered_by_code",                         "Ordering provider identifier (FT1-21.1)"),
+            _s("unit_cost",                               "Unit cost (FT1-22.1)"),
+            _s("filler_order_number",                     "Filler order number (FT1-23.1)"),
+            _s("entered_by_code",                         "Entered by identifier (FT1-24.1)"),
+            _s("procedure_code",                          "Procedure code (FT1-25.1)"),
+            _s("procedure_code_modifier",                 "Procedure modifier (FT1-26.1)"),
+            _s("advanced_beneficiary_notice_code",        "ABN code (FT1-27.1)"),
+            _s("medically_necessary_dup_proc_reason",     "Duplicate procedure reason (FT1-28.1)"),
+            _s("ndc_code",                                "National Drug Code (FT1-29.1)"),
+            _s("payment_reference_id",                    "Payment reference (FT1-30.1)"),
+            _s("transaction_reference_key",               "Transaction reference key (FT1-31)"),
+        ]
+    )
+
+    # ---------------------------------------------------------------------------
+    # RXA — Pharmacy/Treatment Administration
+    # ---------------------------------------------------------------------------
+
+    RXA_SCHEMA = StructType(
+        _METADATA_FIELDS
+        + [
+            _pk_i("set_id",                                "Give sub-ID counter (RXA-1)"),
+            _i("administration_sub_id_counter",            "Administration sub-ID counter (RXA-2)"),
+            _ts("datetime_start_of_administration",        "Administration start date/time (RXA-3)"),
+            _ts("datetime_end_of_administration",          "Administration end date/time (RXA-4)"),
+            _s("administered_code",                        "Drug/vaccine code raw (RXA-5)"),
+            _s("administered_code_id",                     "Drug/vaccine code identifier (RXA-5.1)"),
+            _s("administered_code_text",                   "Drug/vaccine code text (RXA-5.2)"),
+            _s("administered_amount",                      "Amount administered (RXA-6)"),
+            _s("administered_units",                       "Units of measure (RXA-7.1)"),
+            _s("administered_dosage_form",                 "Dosage form (RXA-8.1)"),
+            _s("administration_notes",                     "Administration notes (RXA-9.1)"),
+            _s("administering_provider",                   "Provider who administered (RXA-10.1)"),
+            _s("administered_at_location",                 "Administration location (RXA-11)"),
+            _s("administered_per_time_unit",               "Rate time unit (RXA-12)"),
+            _s("administered_strength",                    "Strength administered (RXA-13)"),
+            _s("administered_strength_units",              "Strength units (RXA-14.1)"),
+            _s("substance_lot_number",                     "Lot number (RXA-15)"),
+            _ts("substance_expiration_date",               "Substance expiration date (RXA-16)"),
+            _s("substance_manufacturer_name",              "Manufacturer name (RXA-17.1)"),
+            _s("substance_treatment_refusal_reason",       "Refusal reason (RXA-18.1)"),
+            _s("indication",                               "Indication for administration (RXA-19.1)"),
+            _s("completion_status",                        "Completion status (RXA-20): CP=Complete, RE=Refused, NA=Not Administered, PA=Partial"),
+            _s("action_code_rxa",                          "Action code (RXA-21)"),
+            _ts("system_entry_datetime",                   "System entry date/time (RXA-22)"),
+            _s("administered_drug_strength_volume",        "Drug strength volume (RXA-23)"),
+            _s("administered_drug_strength_volume_units",  "Drug strength volume units (RXA-24.1)"),
+            _s("administered_barcode_identifier",          "Barcode identifier (RXA-25.1)"),
+            _s("pharmacy_order_type",                      "Pharmacy order type (RXA-26)"),
+        ]
+    )
+
+    # ---------------------------------------------------------------------------
+    # SCH — Scheduling Activity Information
+    # ---------------------------------------------------------------------------
+
+    SCH_SCHEMA = StructType(
+        _METADATA_FIELDS
+        + [
+            _s("placer_appointment_id",        "Appointment ID from placer (SCH-1.1)"),
+            _s("filler_appointment_id",        "Appointment ID from filler (SCH-2.1)"),
+            _i("occurrence_number",            "Occurrence number (SCH-3)"),
+            _s("placer_group_number",          "Placer group number (SCH-4.1)"),
+            _s("schedule_id",                  "Schedule identifier (SCH-5.1)"),
+            _s("event_reason",                 "Event reason (SCH-6.1)"),
+            _s("appointment_reason",           "Reason for appointment (SCH-7.1)"),
+            _s("appointment_type",             "Appointment type (SCH-8.1)"),
+            _i("appointment_duration",         "Appointment duration in minutes (SCH-9, deprecated)"),
+            _s("appointment_duration_units",   "Duration units (SCH-10.1, deprecated)"),
+            _s("appointment_timing_quantity",  "Appointment timing quantity (SCH-11, deprecated)"),
+            _s("placer_contact_person",        "Placer contact person (SCH-12.1)"),
+            _s("placer_contact_phone_number",  "Placer contact phone (SCH-13)"),
+            _s("placer_contact_address",       "Placer contact address (SCH-14)"),
+            _s("placer_contact_location",      "Placer contact location (SCH-15)"),
+            _s("filler_contact_person",        "Filler contact person (SCH-16.1)"),
+            _s("filler_contact_phone_number",  "Filler contact phone (SCH-17)"),
+            _s("filler_contact_address",       "Filler contact address (SCH-18)"),
+            _s("filler_contact_location",      "Filler contact location (SCH-19)"),
+            _s("entered_by_person",            "Person who entered the schedule (SCH-20.1)"),
+            _s("entered_by_phone_number",      "Entered by phone number (SCH-21)"),
+            _s("entered_by_location",          "Entered by location (SCH-22)"),
+            _s("parent_placer_appointment_id", "Parent placer appointment ID (SCH-23.1)"),
+            _s("parent_filler_appointment_id", "Parent filler appointment ID (SCH-24.1)"),
+            _s("filler_status_code",           "Filler status code (SCH-25.1)"),
+            _s("placer_order_number",          "Placer order number (SCH-26.1)"),
+            _s("filler_order_number",          "Filler order number (SCH-27.1)"),
+        ]
+    )
+
+    # ---------------------------------------------------------------------------
+    # TXA — Transcription Document Header
+    # ---------------------------------------------------------------------------
+
+    TXA_SCHEMA = StructType(
+        _METADATA_FIELDS
+        + [
+            _i("set_id",                              "Sequence number (TXA-1)"),
+            _s("document_type",                        "Document type (TXA-2): DS=Discharge Summary, HP=History and Physical, OP=Operative Note"),
+            _s("document_content_presentation",        "Content presentation type (TXA-3)"),
+            _ts("activity_datetime",                   "Activity date/time (TXA-4)"),
+            _s("primary_activity_provider",            "Primary activity provider (TXA-5.1)"),
+            _ts("origination_datetime",                "Origination date/time (TXA-6)"),
+            _ts("transcription_datetime",              "Transcription date/time (TXA-7)"),
+            _ts("edit_datetime",                       "Edit date/time (TXA-8)"),
+            _s("originator",                           "Originator identifier (TXA-9.1)"),
+            _s("assigned_document_authenticator",      "Assigned authenticator (TXA-10.1)"),
+            _s("transcriptionist",                     "Transcriptionist identifier (TXA-11.1)"),
+            _s("unique_document_number",               "Unique document identifier (TXA-12.1)"),
+            _s("parent_document_number",               "Parent document identifier (TXA-13.1)"),
+            _s("placer_order_number",                  "Placer order number (TXA-14.1)"),
+            _s("filler_order_number",                  "Filler order number (TXA-15.1)"),
+            _s("unique_document_file_name",            "Document file name (TXA-16)"),
+            _s("document_completion_status",           "Completion status (TXA-17): DI=Dictated, DO=Documented, AU=Authenticated, LA=Legally Authenticated"),
+            _s("document_confidentiality_status",      "Confidentiality status (TXA-18)"),
+            _s("document_availability_status",         "Availability status (TXA-19)"),
+            _s("document_storage_status",              "Storage status (TXA-20)"),
+            _s("document_change_reason",               "Reason for document change (TXA-21)"),
+            _s("authentication_person_time_stamp",     "Authenticator with timestamp (TXA-22)"),
+            _s("distributed_copies",                   "Recipients of distributed copies (TXA-23.1)"),
         ]
     )
 
@@ -1266,19 +1931,39 @@ def register_lakeflow_source(spark):
     # ---------------------------------------------------------------------------
 
     #: Segment tables exposed by the connector by default.
-    SEGMENT_TABLES: list[str] = ["msh", "pid", "pv1", "obr", "obx", "al1", "dg1", "nk1", "evn"]
+    SEGMENT_TABLES: list[str] = [
+        "msh", "evn", "pid", "pd1", "pv1", "pv2", "nk1", "mrg",
+        "al1", "iam", "dg1", "pr1",
+        "orc", "obr", "obx", "nte", "spm",
+        "in1", "gt1", "ft1",
+        "rxa", "sch", "txa",
+    ]
 
     #: Map from lowercase segment name → StructType.
     SEGMENT_SCHEMAS: dict[str, StructType] = {
         "msh": MSH_SCHEMA,
+        "evn": EVN_SCHEMA,
         "pid": PID_SCHEMA,
+        "pd1": PD1_SCHEMA,
         "pv1": PV1_SCHEMA,
+        "pv2": PV2_SCHEMA,
+        "nk1": NK1_SCHEMA,
+        "mrg": MRG_SCHEMA,
+        "al1": AL1_SCHEMA,
+        "iam": IAM_SCHEMA,
+        "dg1": DG1_SCHEMA,
+        "pr1": PR1_SCHEMA,
+        "orc": ORC_SCHEMA,
         "obr": OBR_SCHEMA,
         "obx": OBX_SCHEMA,
-        "al1": AL1_SCHEMA,
-        "dg1": DG1_SCHEMA,
-        "nk1": NK1_SCHEMA,
-        "evn": EVN_SCHEMA,
+        "nte": NTE_SCHEMA,
+        "spm": SPM_SCHEMA,
+        "in1": IN1_SCHEMA,
+        "gt1": GT1_SCHEMA,
+        "ft1": FT1_SCHEMA,
+        "rxa": RXA_SCHEMA,
+        "sch": SCH_SCHEMA,
+        "txa": TXA_SCHEMA,
     }
 
 
@@ -1291,11 +1976,122 @@ def register_lakeflow_source(spark):
 
 
     ########################################################
+    # src/databricks/labs/community_connector/sources/hl7/apply_comments.py
+    ########################################################
+
+    catalog = "my_catalog"       # UC catalog name
+    schema  = "my_schema"        # UC schema (database) name
+    table_prefix = ""            # Optional prefix prepended to each segment table name (e.g. "hl7_")
+
+    # COMMAND ----------
+
+    # MAGIC %md
+    # MAGIC ## Helper functions
+
+    # COMMAND ----------
+
+    def _esc(s: str) -> str:
+        """Escape single quotes for use inside SQL string literals."""
+        return s.replace("'", "\\'")
+
+
+    def _run(sql: str, dry_run: bool) -> None:
+        if dry_run:
+            print(f"  SQL: {sql}")
+        else:
+            spark.sql(sql)  # noqa: F821 — spark is always defined in Databricks notebooks
+
+
+    def apply_hl7_comments(
+        catalog: str,
+        schema: str,
+        table_prefix: str = "",
+        dry_run: bool = False,
+    ) -> None:
+        """Apply column comments and table descriptions to all HL7 streaming tables.
+
+        Args:
+            catalog:      Unity Catalog catalog name.
+            schema:       Schema (database) name.
+            table_prefix: Optional prefix prepended to each table name (default: "").
+            dry_run:      If True, print the SQL statements without executing them.
+        """
+        total_cols = 0
+        total_tables = 0
+
+        for seg in SEGMENT_TABLES:
+            table_name = f"{table_prefix}{seg}"
+            full_name = f"`{catalog}`.`{schema}`.`{table_name}`"
+
+            struct_type = SEGMENT_SCHEMAS.get(seg)
+            if struct_type is None:
+                print(f"[SKIP] No schema found for segment '{seg}'", file=sys.stderr)
+                continue
+
+            # --- table description ---
+            description = TABLE_DESCRIPTIONS.get(seg, "")
+            if description:
+                sql = f"COMMENT ON TABLE {full_name} IS '{_esc(description)}'"
+                _run(sql, dry_run)
+
+            # --- column comments ---
+            col_count = 0
+            for field in struct_type.fields:
+                comment = field.metadata.get("comment", "")
+                if not comment:
+                    continue
+                sql = (
+                    f"ALTER TABLE {full_name} "
+                    f"ALTER COLUMN `{field.name}` "
+                    f"COMMENT '{_esc(comment)}'"
+                )
+                _run(sql, dry_run)
+                col_count += 1
+
+            print(
+                f"[{'DRY RUN' if dry_run else 'OK'}] {full_name}: "
+                f"{'would apply' if dry_run else 'applied'} {col_count} column comment(s)"
+            )
+            total_cols += col_count
+            total_tables += 1
+
+        print(
+            f"\n{'[DRY RUN] Would apply' if dry_run else 'Applied'} comments to "
+            f"{total_cols} columns across {total_tables} tables."
+        )
+
+    # COMMAND ----------
+
+    # MAGIC %md
+    # MAGIC ## Dry Run — preview SQL without executing
+
+    # COMMAND ----------
+
+    apply_hl7_comments(catalog=catalog, schema=schema, table_prefix=table_prefix, dry_run=True)
+
+    # COMMAND ----------
+
+    # MAGIC %md
+    # MAGIC ## Apply — execute DDL to populate UC comments
+    # MAGIC
+    # MAGIC Uncomment and run the cell below when you are ready to apply.
+
+    # COMMAND ----------
+
+    # apply_hl7_comments(catalog=catalog, schema=schema, table_prefix=table_prefix, dry_run=False)
+
+
+    ########################################################
     # src/databricks/labs/community_connector/sources/hl7/hl7.py
     ########################################################
 
     _DEFAULT_FILE_PATTERN = "*.hl7"
     _DEFAULT_MAX_RECORDS = 10_000
+
+    # Segment types that appear at most once per message; PK = message_id alone.
+    # All other known segment types (obx, obr, al1, dg1, nk1) repeat and require
+    # (message_id, set_id) as a composite PK.
+    _SINGLE_SEGMENT_TABLES = frozenset({"msh", "evn", "pid", "pd1", "pv1", "pv2", "mrg", "sch", "txa"})
 
 
     # ---------------------------------------------------------------------------
@@ -1314,6 +2110,42 @@ def register_lakeflow_source(spark):
             return None
         try:
             return int(s.strip())
+        except ValueError:
+            return None
+
+
+    _DTM_RE = re.compile(
+        r"^(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?(\d{2})?(?:\.\d+)?([+-]\d{4})?$"
+    )
+
+
+    def _parse_dtm(s: str) -> datetime | None:
+        """Parse an HL7 DTM string to a Python datetime.
+
+        Handles partial precision (YYYY, YYYYMM, YYYYMMDD, YYYYMMDDHHMMSS)
+        and optional timezone offset (e.g. +0500, -0800).
+        Returns None for empty or unparseable input.
+        """
+        if not s:
+            return None
+        m = _DTM_RE.match(s.strip())
+        if not m:
+            return None
+        y, mo, d, h, mi, sec, tz = m.groups()
+        try:
+            dt = datetime(
+                int(y),
+                int(mo or 1),
+                int(d or 1),
+                int(h or 0),
+                int(mi or 0),
+                int(sec or 0),
+            )
+            if tz:
+                sign = 1 if tz[0] == "+" else -1
+                offset = timedelta(hours=int(tz[1:3]), minutes=int(tz[3:5]))
+                dt = dt.replace(tzinfo=timezone(sign * offset))
+            return dt
         except ValueError:
             return None
 
@@ -1353,7 +2185,7 @@ def register_lakeflow_source(spark):
             "sending_facility": _v(seg.get_component(4, 1)),       # MSH-4.1
             "receiving_application": _v(seg.get_component(5, 1)),  # MSH-5.1
             "receiving_facility": _v(seg.get_component(6, 1)),     # MSH-6.1
-            "message_datetime": _v(seg.get_field(7)),              # MSH-7
+            "message_datetime": _parse_dtm(seg.get_field(7)),         # MSH-7
             "security": _v(seg.get_field(8)),                      # MSH-8
             "message_code": _v(seg.get_component(9, 1)),           # MSH-9.1 e.g. "ADT"
             "trigger_event": _v(seg.get_component(9, 2)),          # MSH-9.2 e.g. "A01"
@@ -1395,7 +2227,7 @@ def register_lakeflow_source(spark):
             "patient_name_suffix": _v(seg.get_rep_component(5, 1, 5)),       # PID-5.5
             "patient_name_prefix": _v(seg.get_rep_component(5, 1, 6)),       # PID-5.6
             "mothers_maiden_name": _v(seg.get_rep_component(6, 1, 1)),       # PID-6.1
-            "date_of_birth": _v(seg.get_field(7)),                           # PID-7
+            "date_of_birth": _parse_dtm(seg.get_field(7)),                    # PID-7
             "administrative_sex": _v(seg.get_field(8)),                      # PID-8
             "patient_alias": _v(seg.get_first_repetition(9)),                # PID-9
             "race": _v(seg.get_rep_component(10, 1, 1)),                     # PID-10.1
@@ -1424,11 +2256,11 @@ def register_lakeflow_source(spark):
             "citizenship": _v(seg.get_rep_component(26, 1, 1)),              # PID-26.1
             "veterans_military_status": _v(seg.get_component(27, 1)),        # PID-27.1
             "nationality": _v(seg.get_component(28, 1)),                     # PID-28.1
-            "patient_death_datetime": _v(seg.get_field(29)),                 # PID-29
+            "patient_death_datetime": _parse_dtm(seg.get_field(29)),          # PID-29
             "patient_death_indicator": _v(seg.get_field(30)),                # PID-30
             "identity_unknown_indicator": _v(seg.get_field(31)),             # PID-31
             "identity_reliability_code": _v(seg.get_first_repetition(32)),  # PID-32
-            "last_update_datetime": _v(seg.get_field(33)),                   # PID-33
+            "last_update_datetime": _parse_dtm(seg.get_field(33)),            # PID-33
             "last_update_facility": _v(seg.get_component(34, 1)),            # PID-34.1
             "species_code": _v(seg.get_component(35, 1)),                    # PID-35.1
             "breed_code": _v(seg.get_component(36, 1)),                      # PID-36.1
@@ -1500,8 +2332,8 @@ def register_lakeflow_source(spark):
             "account_status": _v(seg.get_field(41)),                         # PV1-41
             "pending_location": _v(seg.get_field(42)),                       # PV1-42
             "prior_temporary_location": _v(seg.get_field(43)),               # PV1-43
-            "admit_datetime": _v(seg.get_first_repetition(44)),              # PV1-44
-            "discharge_datetime": _v(seg.get_first_repetition(45)),          # PV1-45
+            "admit_datetime": _parse_dtm(seg.get_first_repetition(44)),       # PV1-44
+            "discharge_datetime": _parse_dtm(seg.get_first_repetition(45)), # PV1-45
             "current_patient_balance": _v(seg.get_field(46)),                # PV1-46
             "total_charges": _v(seg.get_field(47)),                          # PV1-47
             "total_adjustments": _v(seg.get_field(48)),                      # PV1-48
@@ -1514,7 +2346,7 @@ def register_lakeflow_source(spark):
 
     def _extract_obr(seg: HL7Segment) -> dict:
         return {
-            "set_id": _i(seg.get_field(1)),                                  # OBR-1
+            "set_id": _i(seg.get_field(1)) or 1,                             # OBR-1 (NOT NULL PK; default 1)
             "placer_order_number": _v(seg.get_component(2, 1)),              # OBR-2.1
             "filler_order_number": _v(seg.get_component(3, 1)),              # OBR-3.1
             "universal_service_identifier": _v(seg.get_field(4)),            # OBR-4 raw
@@ -1522,15 +2354,15 @@ def register_lakeflow_source(spark):
             "service_text": _v(seg.get_component(4, 2)),                     # OBR-4.2
             "service_coding_system": _v(seg.get_component(4, 3)),            # OBR-4.3
             "priority": _v(seg.get_field(5)),                                # OBR-5
-            "requested_datetime": _v(seg.get_field(6)),                      # OBR-6
-            "observation_datetime": _v(seg.get_field(7)),                    # OBR-7
-            "observation_end_datetime": _v(seg.get_field(8)),                # OBR-8
+            "requested_datetime": _parse_dtm(seg.get_field(6)),               # OBR-6
+            "observation_datetime": _parse_dtm(seg.get_field(7)),            # OBR-7
+            "observation_end_datetime": _parse_dtm(seg.get_field(8)),        # OBR-8
             "collection_volume": _v(seg.get_component(9, 1)),                # OBR-9.1
             "collector_identifier": _v(seg.get_rep_component(10, 1, 1)),     # OBR-10.1
             "specimen_action_code": _v(seg.get_field(11)),                   # OBR-11
             "danger_code": _v(seg.get_component(12, 1)),                     # OBR-12.1
             "relevant_clinical_information": _v(seg.get_field(13)),          # OBR-13
-            "specimen_received_datetime": _v(seg.get_field(14)),             # OBR-14
+            "specimen_received_datetime": _parse_dtm(seg.get_field(14)),      # OBR-14
             "specimen_source": _v(seg.get_field(15)),                        # OBR-15
             "ordering_provider": _v(seg.get_first_repetition(16)),           # OBR-16 raw
             "ordering_provider_id": _v(seg.get_rep_component(16, 1, 1)),     # OBR-16.1
@@ -1541,7 +2373,7 @@ def register_lakeflow_source(spark):
             "placer_field_2": _v(seg.get_field(19)),                         # OBR-19
             "filler_field_1": _v(seg.get_field(20)),                         # OBR-20
             "filler_field_2": _v(seg.get_field(21)),                         # OBR-21
-            "results_rpt_status_chng_datetime": _v(seg.get_field(22)),       # OBR-22
+            "results_rpt_status_chng_datetime": _parse_dtm(seg.get_field(22)), # OBR-22
             "charge_to_practice": _v(seg.get_field(23)),                     # OBR-23
             "diagnostic_service_section_id": _v(seg.get_field(24)),          # OBR-24
             "result_status": _v(seg.get_field(25)),                          # OBR-25
@@ -1555,7 +2387,7 @@ def register_lakeflow_source(spark):
             "assistant_result_interpreter": _v(seg.get_rep_component(33, 1, 1)),  # OBR-33.1
             "technician": _v(seg.get_rep_component(34, 1, 1)),               # OBR-34.1
             "transcriptionist": _v(seg.get_rep_component(35, 1, 1)),         # OBR-35.1
-            "scheduled_datetime": _v(seg.get_field(36)),                     # OBR-36
+            "scheduled_datetime": _parse_dtm(seg.get_field(36)),              # OBR-36
             "number_of_sample_containers": _i(seg.get_field(37)),            # OBR-37
             "transport_logistics": _v(seg.get_rep_component(38, 1, 1)),      # OBR-38.1
             "collectors_comment": _v(seg.get_rep_component(39, 1, 1)),       # OBR-39.1
@@ -1575,7 +2407,7 @@ def register_lakeflow_source(spark):
 
     def _extract_obx(seg: HL7Segment) -> dict:
         return {
-            "set_id": _i(seg.get_field(1)),                                  # OBX-1
+            "set_id": _i(seg.get_field(1)) or 1,                             # OBX-1 (NOT NULL PK; default 1)
             "value_type": _v(seg.get_field(2)),                              # OBX-2 (NM/ST/TX/CWE…)
             "observation_identifier": _v(seg.get_field(3)),                  # OBX-3 raw
             "observation_id": _v(seg.get_component(3, 1)),                   # OBX-3.1 (LOINC)
@@ -1595,14 +2427,14 @@ def register_lakeflow_source(spark):
             "probability": _v(seg.get_field(9)),                             # OBX-9
             "nature_of_abnormal_test": _v(seg.get_first_repetition(10)),     # OBX-10
             "observation_result_status": _v(seg.get_field(11)),              # OBX-11 (F/P/C…)
-            "effective_date_of_ref_range": _v(seg.get_field(12)),            # OBX-12
+            "effective_date_of_ref_range": _parse_dtm(seg.get_field(12)),     # OBX-12
             "user_defined_access_checks": _v(seg.get_field(13)),             # OBX-13
-            "datetime_of_observation": _v(seg.get_field(14)),                # OBX-14
+            "datetime_of_observation": _parse_dtm(seg.get_field(14)),         # OBX-14
             "producers_id": _v(seg.get_component(15, 1)),                    # OBX-15.1
             "responsible_observer": _v(seg.get_rep_component(16, 1, 1)),     # OBX-16.1
             "observation_method": _v(seg.get_rep_component(17, 1, 1)),       # OBX-17.1
             "equipment_instance_identifier": _v(seg.get_rep_component(18, 1, 1)),  # OBX-18.1
-            "datetime_of_analysis": _v(seg.get_field(19)),                   # OBX-19
+            "datetime_of_analysis": _parse_dtm(seg.get_field(19)),            # OBX-19
             "observation_site": _v(seg.get_rep_component(20, 1, 1)),         # OBX-20.1
             "observation_instance_identifier": _v(seg.get_component(21, 1)), # OBX-21.1
             "mood_code": _v(seg.get_component(22, 1)),                       # OBX-22.1
@@ -1617,7 +2449,7 @@ def register_lakeflow_source(spark):
 
     def _extract_al1(seg: HL7Segment) -> dict:
         return {
-            "set_id": _i(seg.get_field(1)),                                  # AL1-1
+            "set_id": _i(seg.get_field(1)) or 1,                             # AL1-1 (NOT NULL PK; default 1)
             "allergen_type_code": _v(seg.get_component(2, 1)),               # AL1-2.1
             "allergen_code": _v(seg.get_field(3)),                           # AL1-3 raw
             "allergen_id": _v(seg.get_component(3, 1)),                      # AL1-3.1
@@ -1625,20 +2457,20 @@ def register_lakeflow_source(spark):
             "allergen_coding_system": _v(seg.get_component(3, 3)),           # AL1-3.3
             "allergy_severity_code": _v(seg.get_component(4, 1)),            # AL1-4.1
             "allergy_reaction_code": _v(seg.get_first_repetition(5)),        # AL1-5
-            "identification_date": _v(seg.get_field(6)),                     # AL1-6
+            "identification_date": _parse_dtm(seg.get_field(6)),              # AL1-6
         }
 
 
     def _extract_dg1(seg: HL7Segment) -> dict:
         return {
-            "set_id": _i(seg.get_field(1)),                                  # DG1-1
+            "set_id": _i(seg.get_field(1)) or 1,                             # DG1-1 (NOT NULL PK; default 1)
             "diagnosis_coding_method": _v(seg.get_field(2)),                 # DG1-2
             "diagnosis_code": _v(seg.get_field(3)),                          # DG1-3 raw
             "diagnosis_id": _v(seg.get_component(3, 1)),                     # DG1-3.1
             "diagnosis_text": _v(seg.get_component(3, 2)),                   # DG1-3.2
             "diagnosis_coding_system": _v(seg.get_component(3, 3)),          # DG1-3.3
             "diagnosis_description": _v(seg.get_field(4)),                   # DG1-4
-            "diagnosis_datetime": _v(seg.get_field(5)),                      # DG1-5
+            "diagnosis_datetime": _parse_dtm(seg.get_field(5)),               # DG1-5
             "diagnosis_type": _v(seg.get_field(6)),                          # DG1-6
             "major_diagnostic_category": _v(seg.get_component(7, 1)),        # DG1-7.1
             "diagnostic_related_group": _v(seg.get_component(8, 1)),         # DG1-8.1
@@ -1652,7 +2484,7 @@ def register_lakeflow_source(spark):
             "diagnosing_clinician": _v(seg.get_rep_component(16, 1, 1)),     # DG1-16.1
             "diagnosis_classification": _v(seg.get_field(17)),               # DG1-17
             "confidential_indicator": _v(seg.get_field(18)),                 # DG1-18
-            "attestation_datetime": _v(seg.get_field(19)),                   # DG1-19
+            "attestation_datetime": _parse_dtm(seg.get_field(19)),            # DG1-19
             "diagnosis_identifier": _v(seg.get_component(20, 1)),            # DG1-20.1
             "diagnosis_action_code": _v(seg.get_field(21)),                  # DG1-21
             "parent_diagnosis": _v(seg.get_component(22, 1)),                # DG1-22.1
@@ -1665,7 +2497,7 @@ def register_lakeflow_source(spark):
 
     def _extract_nk1(seg: HL7Segment) -> dict:
         return {
-            "set_id": _i(seg.get_field(1)),                                  # NK1-1
+            "set_id": _i(seg.get_field(1)) or 1,                             # NK1-1 (NOT NULL PK; default 1)
             "name": _v(seg.get_first_repetition(2)),                         # NK1-2 raw
             "nk_family_name": _v(seg.get_rep_component(2, 1, 1)),            # NK1-2.1
             "nk_given_name": _v(seg.get_rep_component(2, 1, 2)),             # NK1-2.2
@@ -1677,15 +2509,15 @@ def register_lakeflow_source(spark):
             "phone_number": _v(seg.get_first_repetition(5)),                 # NK1-5
             "business_phone": _v(seg.get_first_repetition(6)),               # NK1-6
             "contact_role": _v(seg.get_component(7, 1)),                     # NK1-7.1
-            "start_date": _v(seg.get_field(8)),                              # NK1-8
-            "end_date": _v(seg.get_field(9)),                                # NK1-9
+            "start_date": _parse_dtm(seg.get_field(8)),                       # NK1-8
+            "end_date": _parse_dtm(seg.get_field(9)),                        # NK1-9
             "job_title": _v(seg.get_field(10)),                              # NK1-10
             "job_code": _v(seg.get_component(11, 1)),                        # NK1-11.1
             "employee_number": _v(seg.get_component(12, 1)),                 # NK1-12.1
             "organization_name": _v(seg.get_rep_component(13, 1, 1)),        # NK1-13.1
             "marital_status": _v(seg.get_component(14, 1)),                  # NK1-14.1
             "administrative_sex": _v(seg.get_field(15)),                     # NK1-15
-            "date_of_birth": _v(seg.get_field(16)),                          # NK1-16
+            "date_of_birth": _parse_dtm(seg.get_field(16)),                   # NK1-16
             "living_dependency": _v(seg.get_rep_component(17, 1, 1)),        # NK1-17.1
             "ambulatory_status": _v(seg.get_rep_component(18, 1, 1)),        # NK1-18.1
             "citizenship": _v(seg.get_rep_component(19, 1, 1)),              # NK1-19.1
@@ -1715,12 +2547,506 @@ def register_lakeflow_source(spark):
     def _extract_evn(seg: HL7Segment) -> dict:
         return {
             "event_type_code": _v(seg.get_field(1)),                         # EVN-1
-            "recorded_datetime": _v(seg.get_field(2)),                       # EVN-2
-            "date_time_planned_event": _v(seg.get_field(3)),                 # EVN-3
+            "recorded_datetime": _parse_dtm(seg.get_field(2)),                # EVN-2
+            "date_time_planned_event": _parse_dtm(seg.get_field(3)),         # EVN-3
             "event_reason_code": _v(seg.get_component(4, 1)),                # EVN-4.1
             "operator_id": _v(seg.get_rep_component(5, 1, 1)),               # EVN-5.1
-            "event_occurred": _v(seg.get_field(6)),                          # EVN-6
+            "event_occurred": _parse_dtm(seg.get_field(6)),                   # EVN-6
             "event_facility": _v(seg.get_component(7, 1)),                   # EVN-7.1
+        }
+
+
+    def _extract_pd1(seg: HL7Segment) -> dict:
+        return {
+            "living_dependency": _v(seg.get_first_repetition(1)),
+            "living_arrangement": _v(seg.get_field(2)),
+            "patient_primary_facility": _v(seg.get_rep_component(3, 1, 1)),
+            "patient_primary_care_provider": _v(seg.get_rep_component(4, 1, 1)),
+            "student_indicator": _v(seg.get_field(5)),
+            "handicap": _v(seg.get_field(6)),
+            "living_will_code": _v(seg.get_field(7)),
+            "organ_donor_code": _v(seg.get_field(8)),
+            "separate_bill": _v(seg.get_field(9)),
+            "duplicate_patient": _v(seg.get_rep_component(10, 1, 1)),
+            "publicity_code": _v(seg.get_component(11, 1)),
+            "protection_indicator": _v(seg.get_field(12)),
+            "protection_indicator_effective_date": _v(seg.get_field(13)),
+            "place_of_worship": _v(seg.get_rep_component(14, 1, 1)),
+            "advance_directive_code": _v(seg.get_rep_component(15, 1, 1)),
+            "immunization_registry_status": _v(seg.get_field(16)),
+            "immunization_registry_status_effective_date": _v(seg.get_field(17)),
+            "publicity_code_effective_date": _v(seg.get_field(18)),
+            "military_branch": _v(seg.get_field(19)),
+            "military_rank_grade": _v(seg.get_field(20)),
+            "military_status": _v(seg.get_field(21)),
+        }
+
+
+    def _extract_pv2(seg: HL7Segment) -> dict:
+        return {
+            "prior_pending_location": _v(seg.get_field(1)),
+            "accommodation_code": _v(seg.get_component(2, 1)),
+            "admit_reason": _v(seg.get_component(3, 1)),
+            "transfer_reason": _v(seg.get_component(4, 1)),
+            "patient_valuables": _v(seg.get_first_repetition(5)),
+            "patient_valuables_location": _v(seg.get_field(6)),
+            "visit_user_code": _v(seg.get_first_repetition(7)),
+            "expected_admit_datetime": _parse_dtm(seg.get_field(8)),
+            "expected_discharge_datetime": _parse_dtm(seg.get_field(9)),
+            "estimated_length_of_inpatient_stay": _i(seg.get_field(10)),
+            "actual_length_of_inpatient_stay": _i(seg.get_field(11)),
+            "visit_description": _v(seg.get_field(12)),
+            "referral_source_code": _v(seg.get_rep_component(13, 1, 1)),
+            "previous_service_date": _v(seg.get_field(14)),
+            "employment_illness_related_indicator": _v(seg.get_field(15)),
+            "purge_status_code": _v(seg.get_field(16)),
+            "purge_status_date": _v(seg.get_field(17)),
+            "special_program_code": _v(seg.get_field(18)),
+            "retention_indicator": _v(seg.get_field(19)),
+            "expected_number_of_insurance_plans": _i(seg.get_field(20)),
+            "visit_publicity_code": _v(seg.get_field(21)),
+            "visit_protection_indicator": _v(seg.get_field(22)),
+            "clinic_organization_name": _v(seg.get_rep_component(23, 1, 1)),
+            "patient_status_code": _v(seg.get_field(24)),
+            "visit_priority_code": _v(seg.get_field(25)),
+            "previous_treatment_date": _v(seg.get_field(26)),
+            "expected_discharge_disposition": _v(seg.get_field(27)),
+            "signature_on_file_date": _v(seg.get_field(28)),
+            "first_similar_illness_date": _v(seg.get_field(29)),
+            "patient_charge_adjustment_code": _v(seg.get_component(30, 1)),
+            "recurring_service_code": _v(seg.get_field(31)),
+            "billing_media_code": _v(seg.get_field(32)),
+            "expected_surgery_datetime": _parse_dtm(seg.get_field(33)),
+            "military_partnership_code": _v(seg.get_field(34)),
+            "military_non_availability_code": _v(seg.get_field(35)),
+            "newborn_baby_indicator": _v(seg.get_field(36)),
+            "baby_detained_indicator": _v(seg.get_field(37)),
+            "mode_of_arrival_code": _v(seg.get_component(38, 1)),
+            "recreational_drug_use_code": _v(seg.get_rep_component(39, 1, 1)),
+            "admission_level_of_care_code": _v(seg.get_component(40, 1)),
+            "precaution_code": _v(seg.get_rep_component(41, 1, 1)),
+            "patient_condition_code": _v(seg.get_component(42, 1)),
+            "living_will_code_pv2": _v(seg.get_field(43)),
+            "organ_donor_code_pv2": _v(seg.get_field(44)),
+            "advance_directive_code_pv2": _v(seg.get_rep_component(45, 1, 1)),
+            "patient_status_effective_date": _v(seg.get_field(46)),
+            "expected_loa_return_datetime": _parse_dtm(seg.get_field(47)),
+            "expected_preadmission_testing_datetime": _parse_dtm(seg.get_field(48)),
+            "notify_clergy_code": _v(seg.get_first_repetition(49)),
+        }
+
+
+    def _extract_mrg(seg: HL7Segment) -> dict:
+        return {
+            "prior_patient_identifier_list": _v(seg.get_first_repetition(1)),
+            "prior_patient_id_value": _v(seg.get_rep_component(1, 1, 1)),
+            "prior_alternate_patient_id": _v(seg.get_first_repetition(2)),
+            "prior_patient_account_number": _v(seg.get_component(3, 1)),
+            "prior_patient_id": _v(seg.get_component(4, 1)),
+            "prior_visit_number": _v(seg.get_component(5, 1)),
+            "prior_alternate_visit_id": _v(seg.get_component(6, 1)),
+            "prior_patient_name": _v(seg.get_first_repetition(7)),
+            "prior_patient_family_name": _v(seg.get_rep_component(7, 1, 1)),
+            "prior_patient_given_name": _v(seg.get_rep_component(7, 1, 2)),
+        }
+
+
+    def _extract_iam(seg: HL7Segment) -> dict:
+        return {
+            "set_id": _i(seg.get_field(1)) or 1,
+            "allergen_type_code": _v(seg.get_component(2, 1)),
+            "allergen_code": _v(seg.get_field(3)),
+            "allergen_id": _v(seg.get_component(3, 1)),
+            "allergen_text": _v(seg.get_component(3, 2)),
+            "allergen_coding_system": _v(seg.get_component(3, 3)),
+            "allergy_severity_code": _v(seg.get_component(4, 1)),
+            "allergy_reaction_code": _v(seg.get_first_repetition(5)),
+            "allergy_action_code": _v(seg.get_component(6, 1)),
+            "allergy_unique_identifier": _v(seg.get_component(7, 1)),
+            "action_reason": _v(seg.get_field(8)),
+            "sensitivity_to_causative_agent_code": _v(seg.get_component(9, 1)),
+            "allergen_group_code": _v(seg.get_component(10, 1)),
+            "allergen_group_text": _v(seg.get_component(10, 2)),
+            "onset_date": _v(seg.get_field(11)),
+            "onset_date_text": _v(seg.get_field(12)),
+            "reported_datetime": _parse_dtm(seg.get_field(13)),
+            "reported_by": _v(seg.get_first_repetition(14)),
+            "reported_by_family_name": _v(seg.get_rep_component(14, 1, 1)),
+            "reported_by_given_name": _v(seg.get_rep_component(14, 1, 2)),
+            "relationship_to_patient_code": _v(seg.get_component(15, 1)),
+            "alert_device_code": _v(seg.get_component(16, 1)),
+            "allergy_clinical_status_code": _v(seg.get_component(17, 1)),
+            "statused_by_person": _v(seg.get_component(18, 1)),
+            "statused_by_organization": _v(seg.get_component(19, 1)),
+            "statused_at_datetime": _parse_dtm(seg.get_field(20)),
+        }
+
+
+    def _extract_pr1(seg: HL7Segment) -> dict:
+        return {
+            "set_id": _i(seg.get_field(1)) or 1,
+            "procedure_coding_method": _v(seg.get_field(2)),
+            "procedure_code": _v(seg.get_field(3)),
+            "procedure_id": _v(seg.get_component(3, 1)),
+            "procedure_text": _v(seg.get_component(3, 2)),
+            "procedure_coding_system": _v(seg.get_component(3, 3)),
+            "procedure_description": _v(seg.get_field(4)),
+            "procedure_datetime": _parse_dtm(seg.get_field(5)),
+            "procedure_functional_type": _v(seg.get_field(6)),
+            "procedure_minutes": _i(seg.get_field(7)),
+            "anesthesiologist": _v(seg.get_rep_component(8, 1, 1)),
+            "anesthesia_code": _v(seg.get_field(9)),
+            "anesthesia_minutes": _i(seg.get_field(10)),
+            "surgeon": _v(seg.get_rep_component(11, 1, 1)),
+            "procedure_practitioner": _v(seg.get_rep_component(12, 1, 1)),
+            "consent_code": _v(seg.get_component(13, 1)),
+            "procedure_priority": _v(seg.get_field(14)),
+            "associated_diagnosis_code": _v(seg.get_component(15, 1)),
+            "procedure_code_modifier": _v(seg.get_rep_component(16, 1, 1)),
+            "procedure_drg_type": _v(seg.get_field(17)),
+            "tissue_type_code": _v(seg.get_rep_component(18, 1, 1)),
+            "procedure_identifier": _v(seg.get_component(19, 1)),
+            "procedure_action_code": _v(seg.get_field(20)),
+        }
+
+
+    def _extract_orc(seg: HL7Segment) -> dict:
+        return {
+            "order_control": _v(seg.get_field(1)),
+            "placer_order_number": _v(seg.get_component(2, 1)),
+            "filler_order_number": _v(seg.get_component(3, 1)),
+            "placer_group_number": _v(seg.get_component(4, 1)),
+            "order_status": _v(seg.get_field(5)),
+            "response_flag": _v(seg.get_field(6)),
+            "quantity_timing": _v(seg.get_first_repetition(7)),
+            "parent_order": _v(seg.get_field(8)),
+            "datetime_of_transaction": _parse_dtm(seg.get_field(9)),
+            "entered_by": _v(seg.get_rep_component(10, 1, 1)),
+            "verified_by": _v(seg.get_rep_component(11, 1, 1)),
+            "ordering_provider": _v(seg.get_first_repetition(12)),
+            "ordering_provider_id": _v(seg.get_rep_component(12, 1, 1)),
+            "ordering_provider_family_name": _v(seg.get_rep_component(12, 1, 2)),
+            "ordering_provider_given_name": _v(seg.get_rep_component(12, 1, 3)),
+            "enterers_location": _v(seg.get_field(13)),
+            "call_back_phone_number": _v(seg.get_first_repetition(14)),
+            "order_effective_datetime": _parse_dtm(seg.get_field(15)),
+            "order_control_code_reason": _v(seg.get_component(16, 1)),
+            "entering_organization": _v(seg.get_component(17, 1)),
+            "entering_device": _v(seg.get_component(18, 1)),
+            "action_by": _v(seg.get_rep_component(19, 1, 1)),
+            "advanced_beneficiary_notice_code": _v(seg.get_component(20, 1)),
+            "ordering_facility_name": _v(seg.get_rep_component(21, 1, 1)),
+            "ordering_facility_address": _v(seg.get_first_repetition(22)),
+            "ordering_facility_phone": _v(seg.get_first_repetition(23)),
+            "ordering_provider_address": _v(seg.get_first_repetition(24)),
+            "order_status_modifier": _v(seg.get_component(25, 1)),
+            "abn_override_reason": _v(seg.get_component(26, 1)),
+            "fillers_expected_availability_datetime": _parse_dtm(seg.get_field(27)),
+            "confidentiality_code": _v(seg.get_component(28, 1)),
+            "order_type": _v(seg.get_component(29, 1)),
+            "enterer_authorization_mode": _v(seg.get_component(30, 1)),
+            "parent_universal_service_id": _v(seg.get_component(31, 1)),
+        }
+
+
+    def _extract_nte(seg: HL7Segment) -> dict:
+        return {
+            "set_id": _i(seg.get_field(1)) or 1,
+            "source_of_comment": _v(seg.get_field(2)),
+            "comment": _v(seg.get_first_repetition(3)),
+            "comment_type": _v(seg.get_component(4, 1)),
+        }
+
+
+    def _extract_spm(seg: HL7Segment) -> dict:
+        return {
+            "set_id": _i(seg.get_field(1)) or 1,
+            "specimen_id": _v(seg.get_component(2, 1)),
+            "specimen_parent_ids": _v(seg.get_rep_component(3, 1, 1)),
+            "specimen_type": _v(seg.get_field(4)),
+            "specimen_type_code": _v(seg.get_component(4, 1)),
+            "specimen_type_text": _v(seg.get_component(4, 2)),
+            "specimen_type_modifier": _v(seg.get_rep_component(5, 1, 1)),
+            "specimen_additives": _v(seg.get_rep_component(6, 1, 1)),
+            "specimen_collection_method": _v(seg.get_component(7, 1)),
+            "specimen_source_site": _v(seg.get_component(8, 1)),
+            "specimen_source_site_modifier": _v(seg.get_rep_component(9, 1, 1)),
+            "specimen_collection_site": _v(seg.get_component(10, 1)),
+            "specimen_role": _v(seg.get_rep_component(11, 1, 1)),
+            "specimen_collection_amount": _v(seg.get_component(12, 1)),
+            "grouped_specimen_count": _i(seg.get_field(13)),
+            "specimen_description": _v(seg.get_first_repetition(14)),
+            "specimen_handling_code": _v(seg.get_rep_component(15, 1, 1)),
+            "specimen_risk_code": _v(seg.get_rep_component(16, 1, 1)),
+            "specimen_collection_datetime": _v(seg.get_component(17, 1)),
+            "specimen_received_datetime": _parse_dtm(seg.get_field(18)),
+            "specimen_expiration_datetime": _parse_dtm(seg.get_field(19)),
+            "specimen_availability": _v(seg.get_field(20)),
+            "specimen_reject_reason": _v(seg.get_rep_component(21, 1, 1)),
+            "specimen_quality": _v(seg.get_component(22, 1)),
+            "specimen_appropriateness": _v(seg.get_component(23, 1)),
+            "specimen_condition": _v(seg.get_rep_component(24, 1, 1)),
+            "specimen_current_quantity": _v(seg.get_component(25, 1)),
+            "number_of_specimen_containers": _i(seg.get_field(26)),
+            "container_type": _v(seg.get_component(27, 1)),
+            "container_condition": _v(seg.get_component(28, 1)),
+            "specimen_child_role": _v(seg.get_component(29, 1)),
+        }
+
+
+    def _extract_in1(seg: HL7Segment) -> dict:
+        return {
+            "set_id": _i(seg.get_field(1)) or 1,
+            "insurance_plan_id": _v(seg.get_component(2, 1)),
+            "insurance_plan_text": _v(seg.get_component(2, 2)),
+            "insurance_company_id": _v(seg.get_rep_component(3, 1, 1)),
+            "insurance_company_name": _v(seg.get_rep_component(4, 1, 1)),
+            "insurance_company_address": _v(seg.get_first_repetition(5)),
+            "insurance_co_contact_person": _v(seg.get_rep_component(6, 1, 1)),
+            "insurance_co_phone_number": _v(seg.get_first_repetition(7)),
+            "group_number": _v(seg.get_field(8)),
+            "group_name": _v(seg.get_rep_component(9, 1, 1)),
+            "insureds_group_emp_id": _v(seg.get_rep_component(10, 1, 1)),
+            "insureds_group_emp_name": _v(seg.get_rep_component(11, 1, 1)),
+            "plan_effective_date": _v(seg.get_field(12)),
+            "plan_expiration_date": _v(seg.get_field(13)),
+            "authorization_information": _v(seg.get_component(14, 1)),
+            "plan_type": _v(seg.get_field(15)),
+            "name_of_insured": _v(seg.get_first_repetition(16)),
+            "name_of_insured_family": _v(seg.get_rep_component(16, 1, 1)),
+            "name_of_insured_given": _v(seg.get_rep_component(16, 1, 2)),
+            "insureds_relationship_to_patient": _v(seg.get_component(17, 1)),
+            "insureds_date_of_birth": _parse_dtm(seg.get_field(18)),
+            "insureds_address": _v(seg.get_first_repetition(19)),
+            "assignment_of_benefits": _v(seg.get_field(20)),
+            "coordination_of_benefits": _v(seg.get_field(21)),
+            "coord_of_ben_priority": _v(seg.get_field(22)),
+            "notice_of_admission_flag": _v(seg.get_field(23)),
+            "notice_of_admission_date": _v(seg.get_field(24)),
+            "report_of_eligibility_flag": _v(seg.get_field(25)),
+            "report_of_eligibility_date": _v(seg.get_field(26)),
+            "release_information_code": _v(seg.get_field(27)),
+            "pre_admit_cert": _v(seg.get_field(28)),
+            "verification_datetime": _parse_dtm(seg.get_field(29)),
+            "verification_by": _v(seg.get_rep_component(30, 1, 1)),
+            "type_of_agreement_code": _v(seg.get_field(31)),
+            "billing_status": _v(seg.get_field(32)),
+            "lifetime_reserve_days": _i(seg.get_field(33)),
+            "delay_before_lr_day": _i(seg.get_field(34)),
+            "company_plan_code": _v(seg.get_field(35)),
+            "policy_number": _v(seg.get_field(36)),
+            "policy_deductible": _v(seg.get_component(37, 1)),
+            "policy_limit_amount": _v(seg.get_component(38, 1)),
+            "policy_limit_days": _i(seg.get_field(39)),
+            "room_rate_semi_private": _v(seg.get_component(40, 1)),
+            "room_rate_private": _v(seg.get_component(41, 1)),
+            "insureds_employment_status": _v(seg.get_component(42, 1)),
+            "insureds_administrative_sex": _v(seg.get_field(43)),
+            "insureds_employers_address": _v(seg.get_first_repetition(44)),
+            "verification_status": _v(seg.get_field(45)),
+            "prior_insurance_plan_id": _v(seg.get_field(46)),
+            "coverage_type": _v(seg.get_field(47)),
+            "handicap": _v(seg.get_field(48)),
+            "insureds_id_number": _v(seg.get_rep_component(49, 1, 1)),
+            "signature_code": _v(seg.get_field(50)),
+            "signature_code_date": _v(seg.get_field(51)),
+            "insureds_birth_place": _v(seg.get_field(52)),
+            "vip_indicator": _v(seg.get_field(53)),
+        }
+
+
+    def _extract_gt1(seg: HL7Segment) -> dict:
+        return {
+            "set_id": _i(seg.get_field(1)) or 1,
+            "guarantor_number": _v(seg.get_rep_component(2, 1, 1)),
+            "guarantor_name": _v(seg.get_first_repetition(3)),
+            "guarantor_family_name": _v(seg.get_rep_component(3, 1, 1)),
+            "guarantor_given_name": _v(seg.get_rep_component(3, 1, 2)),
+            "guarantor_spouse_name": _v(seg.get_rep_component(4, 1, 1)),
+            "guarantor_address": _v(seg.get_first_repetition(5)),
+            "guarantor_ph_num_home": _v(seg.get_first_repetition(6)),
+            "guarantor_ph_num_business": _v(seg.get_first_repetition(7)),
+            "guarantor_date_of_birth": _parse_dtm(seg.get_field(8)),
+            "guarantor_administrative_sex": _v(seg.get_field(9)),
+            "guarantor_type": _v(seg.get_field(10)),
+            "guarantor_relationship": _v(seg.get_component(11, 1)),
+            "guarantor_ssn": _v(seg.get_field(12)),
+            "guarantor_date_begin": _v(seg.get_field(13)),
+            "guarantor_date_end": _v(seg.get_field(14)),
+            "guarantor_priority": _i(seg.get_field(15)),
+            "guarantor_employer_name": _v(seg.get_rep_component(16, 1, 1)),
+            "guarantor_employer_address": _v(seg.get_first_repetition(17)),
+            "guarantor_employer_phone_number": _v(seg.get_first_repetition(18)),
+            "guarantor_employee_id_number": _v(seg.get_rep_component(19, 1, 1)),
+            "guarantor_employment_status": _v(seg.get_field(20)),
+            "guarantor_organization_name": _v(seg.get_rep_component(21, 1, 1)),
+            "guarantor_billing_hold_flag": _v(seg.get_field(22)),
+            "guarantor_credit_rating_code": _v(seg.get_component(23, 1)),
+            "guarantor_death_date_and_time": _parse_dtm(seg.get_field(24)),
+            "guarantor_death_flag": _v(seg.get_field(25)),
+            "guarantor_charge_adjustment_code": _v(seg.get_component(26, 1)),
+            "guarantor_household_annual_income": _v(seg.get_component(27, 1)),
+            "guarantor_household_size": _i(seg.get_field(28)),
+            "guarantor_employer_id_number": _v(seg.get_rep_component(29, 1, 1)),
+            "guarantor_marital_status_code": _v(seg.get_component(30, 1)),
+            "guarantor_hire_effective_date": _v(seg.get_field(31)),
+            "employment_stop_date": _v(seg.get_field(32)),
+            "living_dependency": _v(seg.get_field(33)),
+            "ambulatory_status": _v(seg.get_first_repetition(34)),
+            "citizenship": _v(seg.get_rep_component(35, 1, 1)),
+            "primary_language": _v(seg.get_component(36, 1)),
+            "living_arrangement": _v(seg.get_field(37)),
+            "publicity_code": _v(seg.get_component(38, 1)),
+            "protection_indicator": _v(seg.get_field(39)),
+            "student_indicator": _v(seg.get_field(40)),
+            "religion": _v(seg.get_component(41, 1)),
+            "mothers_maiden_name": _v(seg.get_rep_component(42, 1, 1)),
+            "nationality": _v(seg.get_component(43, 1)),
+            "ethnic_group": _v(seg.get_rep_component(44, 1, 1)),
+            "contact_persons_name": _v(seg.get_rep_component(45, 1, 1)),
+            "contact_persons_telephone_number": _v(seg.get_first_repetition(46)),
+            "contact_reason": _v(seg.get_component(47, 1)),
+            "contact_relationship": _v(seg.get_field(48)),
+            "job_title": _v(seg.get_field(49)),
+            "job_code_class": _v(seg.get_component(50, 1)),
+            "guarantor_employers_org_name": _v(seg.get_rep_component(51, 1, 1)),
+            "handicap": _v(seg.get_field(52)),
+            "job_status": _v(seg.get_field(53)),
+            "guarantor_financial_class": _v(seg.get_component(54, 1)),
+            "guarantor_race": _v(seg.get_rep_component(55, 1, 1)),
+            "guarantor_birth_place": _v(seg.get_field(56)),
+            "vip_indicator": _v(seg.get_field(57)),
+        }
+
+
+    def _extract_ft1(seg: HL7Segment) -> dict:
+        return {
+            "set_id": _i(seg.get_field(1)) or 1,
+            "transaction_id": _v(seg.get_field(2)),
+            "transaction_batch_id": _v(seg.get_field(3)),
+            "transaction_date": _v(seg.get_component(4, 1)),
+            "transaction_posting_date": _parse_dtm(seg.get_field(5)),
+            "transaction_type": _v(seg.get_field(6)),
+            "transaction_code": _v(seg.get_field(7)),
+            "transaction_code_id": _v(seg.get_component(7, 1)),
+            "transaction_code_text": _v(seg.get_component(7, 2)),
+            "transaction_description": _v(seg.get_field(8)),
+            "transaction_description_alt": _v(seg.get_field(9)),
+            "transaction_quantity": _i(seg.get_field(10)),
+            "transaction_amount_extended": _v(seg.get_component(11, 1)),
+            "transaction_amount_unit": _v(seg.get_component(12, 1)),
+            "department_code": _v(seg.get_component(13, 1)),
+            "insurance_plan_id": _v(seg.get_component(14, 1)),
+            "insurance_amount": _v(seg.get_component(15, 1)),
+            "assigned_patient_location": _v(seg.get_field(16)),
+            "fee_schedule": _v(seg.get_field(17)),
+            "patient_type": _v(seg.get_field(18)),
+            "diagnosis_code": _v(seg.get_rep_component(19, 1, 1)),
+            "performed_by_code": _v(seg.get_rep_component(20, 1, 1)),
+            "ordered_by_code": _v(seg.get_rep_component(21, 1, 1)),
+            "unit_cost": _v(seg.get_component(22, 1)),
+            "filler_order_number": _v(seg.get_component(23, 1)),
+            "entered_by_code": _v(seg.get_rep_component(24, 1, 1)),
+            "procedure_code": _v(seg.get_component(25, 1)),
+            "procedure_code_modifier": _v(seg.get_rep_component(26, 1, 1)),
+            "advanced_beneficiary_notice_code": _v(seg.get_component(27, 1)),
+            "medically_necessary_dup_proc_reason": _v(seg.get_component(28, 1)),
+            "ndc_code": _v(seg.get_component(29, 1)),
+            "payment_reference_id": _v(seg.get_component(30, 1)),
+            "transaction_reference_key": _v(seg.get_first_repetition(31)),
+        }
+
+
+    def _extract_rxa(seg: HL7Segment) -> dict:
+        return {
+            "set_id": _i(seg.get_field(1)) or 1,
+            "administration_sub_id_counter": _i(seg.get_field(2)),
+            "datetime_start_of_administration": _parse_dtm(seg.get_field(3)),
+            "datetime_end_of_administration": _parse_dtm(seg.get_field(4)),
+            "administered_code": _v(seg.get_field(5)),
+            "administered_code_id": _v(seg.get_component(5, 1)),
+            "administered_code_text": _v(seg.get_component(5, 2)),
+            "administered_amount": _v(seg.get_field(6)),
+            "administered_units": _v(seg.get_component(7, 1)),
+            "administered_dosage_form": _v(seg.get_component(8, 1)),
+            "administration_notes": _v(seg.get_rep_component(9, 1, 1)),
+            "administering_provider": _v(seg.get_rep_component(10, 1, 1)),
+            "administered_at_location": _v(seg.get_field(11)),
+            "administered_per_time_unit": _v(seg.get_field(12)),
+            "administered_strength": _v(seg.get_field(13)),
+            "administered_strength_units": _v(seg.get_component(14, 1)),
+            "substance_lot_number": _v(seg.get_first_repetition(15)),
+            "substance_expiration_date": _parse_dtm(seg.get_first_repetition(16)),
+            "substance_manufacturer_name": _v(seg.get_rep_component(17, 1, 1)),
+            "substance_treatment_refusal_reason": _v(seg.get_rep_component(18, 1, 1)),
+            "indication": _v(seg.get_rep_component(19, 1, 1)),
+            "completion_status": _v(seg.get_field(20)),
+            "action_code_rxa": _v(seg.get_field(21)),
+            "system_entry_datetime": _parse_dtm(seg.get_field(22)),
+            "administered_drug_strength_volume": _v(seg.get_field(23)),
+            "administered_drug_strength_volume_units": _v(seg.get_component(24, 1)),
+            "administered_barcode_identifier": _v(seg.get_component(25, 1)),
+            "pharmacy_order_type": _v(seg.get_field(26)),
+        }
+
+
+    def _extract_sch(seg: HL7Segment) -> dict:
+        return {
+            "placer_appointment_id": _v(seg.get_component(1, 1)),
+            "filler_appointment_id": _v(seg.get_component(2, 1)),
+            "occurrence_number": _i(seg.get_field(3)),
+            "placer_group_number": _v(seg.get_component(4, 1)),
+            "schedule_id": _v(seg.get_component(5, 1)),
+            "event_reason": _v(seg.get_component(6, 1)),
+            "appointment_reason": _v(seg.get_component(7, 1)),
+            "appointment_type": _v(seg.get_component(8, 1)),
+            "appointment_duration": _i(seg.get_field(9)),
+            "appointment_duration_units": _v(seg.get_component(10, 1)),
+            "appointment_timing_quantity": _v(seg.get_first_repetition(11)),
+            "placer_contact_person": _v(seg.get_rep_component(12, 1, 1)),
+            "placer_contact_phone_number": _v(seg.get_field(13)),
+            "placer_contact_address": _v(seg.get_first_repetition(14)),
+            "placer_contact_location": _v(seg.get_field(15)),
+            "filler_contact_person": _v(seg.get_rep_component(16, 1, 1)),
+            "filler_contact_phone_number": _v(seg.get_field(17)),
+            "filler_contact_address": _v(seg.get_first_repetition(18)),
+            "filler_contact_location": _v(seg.get_field(19)),
+            "entered_by_person": _v(seg.get_rep_component(20, 1, 1)),
+            "entered_by_phone_number": _v(seg.get_first_repetition(21)),
+            "entered_by_location": _v(seg.get_field(22)),
+            "parent_placer_appointment_id": _v(seg.get_component(23, 1)),
+            "parent_filler_appointment_id": _v(seg.get_component(24, 1)),
+            "filler_status_code": _v(seg.get_component(25, 1)),
+            "placer_order_number": _v(seg.get_rep_component(26, 1, 1)),
+            "filler_order_number": _v(seg.get_rep_component(27, 1, 1)),
+        }
+
+
+    def _extract_txa(seg: HL7Segment) -> dict:
+        return {
+            "set_id": _i(seg.get_field(1)) or 1,
+            "document_type": _v(seg.get_field(2)),
+            "document_content_presentation": _v(seg.get_field(3)),
+            "activity_datetime": _parse_dtm(seg.get_field(4)),
+            "primary_activity_provider": _v(seg.get_rep_component(5, 1, 1)),
+            "origination_datetime": _parse_dtm(seg.get_field(6)),
+            "transcription_datetime": _parse_dtm(seg.get_field(7)),
+            "edit_datetime": _parse_dtm(seg.get_first_repetition(8)),
+            "originator": _v(seg.get_rep_component(9, 1, 1)),
+            "assigned_document_authenticator": _v(seg.get_rep_component(10, 1, 1)),
+            "transcriptionist": _v(seg.get_rep_component(11, 1, 1)),
+            "unique_document_number": _v(seg.get_component(12, 1)),
+            "parent_document_number": _v(seg.get_component(13, 1)),
+            "placer_order_number": _v(seg.get_rep_component(14, 1, 1)),
+            "filler_order_number": _v(seg.get_component(15, 1)),
+            "unique_document_file_name": _v(seg.get_field(16)),
+            "document_completion_status": _v(seg.get_field(17)),
+            "document_confidentiality_status": _v(seg.get_field(18)),
+            "document_availability_status": _v(seg.get_field(19)),
+            "document_storage_status": _v(seg.get_field(20)),
+            "document_change_reason": _v(seg.get_field(21)),
+            "authentication_person_time_stamp": _v(seg.get_first_repetition(22)),
+            "distributed_copies": _v(seg.get_rep_component(23, 1, 1)),
         }
 
 
@@ -1733,14 +3059,28 @@ def register_lakeflow_source(spark):
 
     _EXTRACTORS = {
         "msh": _extract_msh,
+        "evn": _extract_evn,
         "pid": _extract_pid,
+        "pd1": _extract_pd1,
         "pv1": _extract_pv1,
+        "pv2": _extract_pv2,
+        "nk1": _extract_nk1,
+        "mrg": _extract_mrg,
+        "al1": _extract_al1,
+        "iam": _extract_iam,
+        "dg1": _extract_dg1,
+        "pr1": _extract_pr1,
+        "orc": _extract_orc,
         "obr": _extract_obr,
         "obx": _extract_obx,
-        "al1": _extract_al1,
-        "dg1": _extract_dg1,
-        "nk1": _extract_nk1,
-        "evn": _extract_evn,
+        "nte": _extract_nte,
+        "spm": _extract_spm,
+        "in1": _extract_in1,
+        "gt1": _extract_gt1,
+        "ft1": _extract_ft1,
+        "rxa": _extract_rxa,
+        "sch": _extract_sch,
+        "txa": _extract_txa,
     }
 
 
@@ -1825,8 +3165,16 @@ def register_lakeflow_source(spark):
 
         def read_table_metadata(self, table_name: str, table_options: dict[str, str]) -> dict:
             self._validate_table(table_name, table_options)
-            segment_type = table_options.get("segment_type", table_name)
-            return {"ingestion_type": "append", "description": TABLE_DESCRIPTIONS.get(segment_type, "")}
+            segment_type = table_options.get("segment_type", table_name).lower()
+            # Single-segment tables have one row per message → PK is message_id alone.
+            # Repeating-segment tables (multiple OBX, OBR, etc.) need set_id too.
+            is_single = segment_type in _SINGLE_SEGMENT_TABLES
+            return {
+                "ingestion_type": "cdc",
+                "cursor_field": "message_timestamp",
+                "primary_keys": ["message_id"] if is_single else ["message_id", "set_id"],
+                "description": TABLE_DESCRIPTIONS.get(segment_type, ""),
+            }
 
         def read_table(
             self, table_name: str, start_offset: dict, table_options: dict[str, str]
@@ -1922,11 +3270,15 @@ def register_lakeflow_source(spark):
 
                 if segment_type == "MSH":
                     if msh is not None:
-                        records.append(meta | _extract_msh(msh))
+                        records.append(meta | _extract_msh(msh) | {"raw_segment": msh.raw_line})
                 else:
                     extractor = _EXTRACTORS.get(segment_type.lower(), _extract_generic)
-                    for seg in msg.get_segments(segment_type):
-                        records.append(meta | extractor(seg))
+                    for idx, seg in enumerate(msg.get_segments(segment_type), start=1):
+                        row = meta | extractor(seg) | {"raw_segment": seg.raw_line}
+                        # Synthesize set_id for repeating segments that lack a native one (e.g. ORC).
+                        if segment_type.lower() not in _SINGLE_SEGMENT_TABLES and "set_id" not in row:
+                            row["set_id"] = idx
+                        records.append(row)
 
             return records
 

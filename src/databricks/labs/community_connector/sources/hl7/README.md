@@ -1,9 +1,12 @@
 # HL7 v2 Community Connector
 
 Ingests **HL7 v2 message files** from a Databricks Unity Catalog Volume into
-structured Delta tables.  Each HL7 segment type (MSH, PID, PV1, OBR, OBX, …)
-becomes its own streaming table, enabling SQL analytics over clinical data
-without a separate integration engine.
+structured Delta tables.  Each HL7 segment type (MSH, PID, PV1, OBR, OBX,
+IN1, RXA, SCH, TXA, …) becomes its own streaming table, enabling SQL
+analytics over clinical, financial, pharmacy, and scheduling data without a
+separate integration engine.  The connector supports **23 segment types** out
+of the box, covering patient administration, orders/results, diagnoses,
+procedures, insurance, pharmacy, scheduling, and document management.
 
 The connector uses a **zero-dependency custom parser** and supports HL7 v2.1–v2.8.
 New files are picked up incrementally on every pipeline trigger — no duplicate
@@ -58,15 +61,35 @@ pipeline = w.pipelines.create(
     ingestion_definition={
         "connection_name": "hl7_hospital_feed",
         "objects": [
+            # Patient Administration
             {"table": {"source_table": {"name": "msh"}}},
+            {"table": {"source_table": {"name": "evn"}}},
             {"table": {"source_table": {"name": "pid"}}},
+            {"table": {"source_table": {"name": "pd1"}}},
             {"table": {"source_table": {"name": "pv1"}}},
+            {"table": {"source_table": {"name": "pv2"}}},
+            {"table": {"source_table": {"name": "nk1"}}},
+            {"table": {"source_table": {"name": "mrg"}}},
+            # Clinical
+            {"table": {"source_table": {"name": "al1"}}},
+            {"table": {"source_table": {"name": "iam"}}},
+            {"table": {"source_table": {"name": "dg1"}}},
+            {"table": {"source_table": {"name": "pr1"}}},
+            # Orders & Results
+            {"table": {"source_table": {"name": "orc"}}},
             {"table": {"source_table": {"name": "obr"}}},
             {"table": {"source_table": {"name": "obx"}}},
-            {"table": {"source_table": {"name": "al1"}}},
-            {"table": {"source_table": {"name": "dg1"}}},
-            {"table": {"source_table": {"name": "nk1"}}},
-            {"table": {"source_table": {"name": "evn"}}},
+            {"table": {"source_table": {"name": "nte"}}},
+            {"table": {"source_table": {"name": "spm"}}},
+            # Financial / Insurance
+            {"table": {"source_table": {"name": "in1"}}},
+            {"table": {"source_table": {"name": "gt1"}}},
+            {"table": {"source_table": {"name": "ft1"}}},
+            # Pharmacy
+            {"table": {"source_table": {"name": "rxa"}}},
+            # Scheduling & Documents
+            {"table": {"source_table": {"name": "sch"}}},
+            {"table": {"source_table": {"name": "txa"}}},
         ]
     }
 )
@@ -74,7 +97,7 @@ pipeline = w.pipelines.create(
 
 ---
 
-## Supported Tables
+## Supported Tables (23 Segments)
 
 Every table includes four common columns that serve as join keys and
 traceability fields:
@@ -86,7 +109,9 @@ traceability fields:
 | `hl7_version` | MSH-12 | HL7 version string (e.g. `2.5.1`) |
 | `source_file` | filename | Source `.hl7` filename for traceability |
 
-### msh — Message Header
+### Patient Administration
+
+#### msh — Message Header
 
 One row per HL7 message.
 
@@ -97,7 +122,18 @@ One row per HL7 message.
 | `message_code`, `trigger_event` | Message type components (MSH-9.1, MSH-9.2), e.g. `ADT` / `A01` |
 | `processing_id` | `P` (production), `T` (test), `D` (debug) |
 
-### pid — Patient Identification
+#### evn — Event Type
+
+One row per message containing an EVN segment.
+
+| Key Fields | Description |
+|---|---|
+| `recorded_datetime` | When the event was recorded (EVN-2) |
+| `event_reason_code` | Reason for the event (EVN-4.1) |
+| `operator_id` | User who triggered the event (EVN-5.1) |
+| `event_occurred` | When the clinical event actually occurred (EVN-6) |
+
+#### pid — Patient Identification
 
 One row per message containing a PID segment.
 
@@ -109,7 +145,19 @@ One row per message containing a PID segment.
 | `administrative_sex` | M / F / U / … (PID-8) |
 | `address_street`, `address_city`, `address_state`, `address_zip` | Home address (PID-11) |
 
-### pv1 — Patient Visit
+#### pd1 — Patient Additional Demographic
+
+One row per message containing a PD1 segment.
+
+| Key Fields | Description |
+|---|---|
+| `living_will_code` | Living will status (PD1-7) |
+| `organ_donor_code` | Organ donor status (PD1-8) |
+| `patient_primary_facility` | Primary care facility (PD1-3) |
+| `advance_directive_code` | Advance directive (PD1-15) |
+| `immunization_registry_status` | Registry status (PD1-16) |
+
+#### pv1 — Patient Visit
 
 One row per encounter.
 
@@ -121,7 +169,100 @@ One row per encounter.
 | `visit_number` | Encounter / visit ID (PV1-19.1) |
 | `admit_datetime`, `discharge_datetime` | Admission and discharge times (PV1-44, PV1-45) |
 
-### obr — Observation Request
+#### pv2 — Patient Visit Additional
+
+One row per message containing a PV2 segment.
+
+| Key Fields | Description |
+|---|---|
+| `admit_reason` | Reason for admission (PV2-3) |
+| `transfer_reason` | Reason for transfer (PV2-4) |
+| `expected_admit_datetime`, `expected_discharge_datetime` | Expected dates (PV2-8, PV2-9) |
+| `mode_of_arrival_code` | Mode of arrival — ambulance, walk-in, etc. (PV2-38) |
+| `admission_level_of_care_code` | Level of care (PV2-40) |
+
+#### nk1 — Next of Kin
+
+Multiple rows per message (one per contact).
+
+| Key Fields | Description |
+|---|---|
+| `nk_family_name`, `nk_given_name` | Contact name (NK1-2.1, NK1-2.2) |
+| `relationship_code`, `relationship_text` | Relationship to patient (NK1-3) |
+| `phone_number` | Primary contact number (NK1-5) |
+
+#### mrg — Merge Patient Information
+
+One row per merge message (ADT^A34, ADT^A40, etc.).
+
+| Key Fields | Description |
+|---|---|
+| `prior_patient_id` | Prior patient identifier (MRG-1.1) |
+| `prior_patient_account_number` | Prior account number (MRG-3.1) |
+| `prior_patient_name` | Prior patient name (MRG-7) |
+
+### Clinical
+
+#### al1 — Patient Allergy
+
+Multiple rows per message (one per allergy).
+
+| Key Fields | Description |
+|---|---|
+| `allergen_id`, `allergen_text` | Allergen code and display (AL1-3.1, AL1-3.2) |
+| `allergen_type_code` | DA (drug), FA (food), EA (environmental), … (AL1-2.1) |
+| `allergy_severity_code` | SV (severe), MO (moderate), MI (mild) (AL1-4.1) |
+| `allergy_reaction_code` | Reaction description, e.g. `HIVES` (AL1-5) |
+
+#### iam — Patient Adverse Reaction
+
+Multiple rows per message. Newer replacement for AL1 with action-code support.
+
+| Key Fields | Description |
+|---|---|
+| `allergen_id`, `allergen_text` | Allergen code and display (IAM-3.1, IAM-3.2) |
+| `allergen_type_code` | Allergen type (IAM-2) |
+| `allergy_severity_code` | Severity (IAM-4) |
+| `allergy_action_code` | A (add), D (delete), U (update) (IAM-6) |
+| `allergy_clinical_status_code` | Clinical status — active, inactive, resolved (IAM-17) |
+
+#### dg1 — Diagnosis
+
+Multiple rows per message (one per diagnosis).
+
+| Key Fields | Description |
+|---|---|
+| `diagnosis_id`, `diagnosis_text`, `diagnosis_coding_system` | ICD-10 code (DG1-3) |
+| `diagnosis_type` | A (admitting), W (working), F (final) (DG1-6) |
+| `diagnosis_datetime` | When the diagnosis was recorded (DG1-5) |
+
+#### pr1 — Procedures
+
+Multiple rows per message (one per procedure).
+
+| Key Fields | Description |
+|---|---|
+| `procedure_code`, `procedure_text`, `procedure_coding_system` | CPT/ICD procedure (PR1-3) |
+| `procedure_datetime` | When the procedure was performed (PR1-5) |
+| `procedure_functional_type` | Functional type (PR1-6) |
+| `procedure_minutes` | Duration in minutes (PR1-7) |
+| `anesthesia_code`, `anesthesia_minutes` | Anesthesia details (PR1-9, PR1-10) |
+
+### Orders & Results
+
+#### orc — Common Order
+
+Multiple rows per message (one per order).
+
+| Key Fields | Description |
+|---|---|
+| `order_control` | Order action: NW (new), CA (cancel), SC (status change), RE (observations) (ORC-1) |
+| `placer_order_number`, `filler_order_number` | Order identifiers (ORC-2, ORC-3) |
+| `order_status` | Order status (ORC-5) |
+| `ordering_provider_id`, `ordering_provider_family_name` | Ordering clinician (ORC-12) |
+| `order_effective_datetime` | Effective datetime (ORC-15) |
+
+#### obr — Observation Request
 
 One row per order (lab / radiology).
 
@@ -133,7 +274,7 @@ One row per order (lab / radiology).
 | `ordering_provider_id`, `ordering_provider_family_name` | Ordering clinician (OBR-16) |
 | `result_status` | F (final), P (preliminary), C (correction), … (OBR-25) |
 
-### obx — Observation Result
+#### obx — Observation Result
 
 **One row per OBX segment** — a single message with a Basic Metabolic Panel
 typically produces 8–14 OBX rows.
@@ -148,39 +289,108 @@ typically produces 8–14 OBX rows.
 | `interpretation_codes` | N (normal), H (high), L (low), … (OBX-8) |
 | `observation_result_status` | F (final), P (preliminary), … (OBX-11) |
 
-### al1 — Patient Allergy
+#### nte — Notes and Comments
+
+Multiple rows per message. Attached to preceding order or result segments.
 
 | Key Fields | Description |
 |---|---|
-| `allergen_id`, `allergen_text` | Allergen code and display (AL1-3.1, AL1-3.2) |
-| `allergen_type_code` | DA (drug), FA (food), EA (environmental), … (AL1-2.1) |
-| `allergy_severity_code` | SV (severe), MO (moderate), MI (mild) (AL1-4.1) |
-| `allergy_reaction_code` | Reaction description, e.g. `HIVES` (AL1-5) |
+| `source_of_comment` | L (ancillary/filler), P (orderer/placer), O (other) (NTE-2) |
+| `comment` | Free-text comment content (NTE-3) |
+| `comment_type` | Comment type code (NTE-4) |
 
-### dg1 — Diagnosis
+#### spm — Specimen
 
-| Key Fields | Description |
-|---|---|
-| `diagnosis_id`, `diagnosis_text`, `diagnosis_coding_system` | ICD-10 code (DG1-3) |
-| `diagnosis_type` | A (admitting), W (working), F (final) (DG1-6) |
-| `diagnosis_datetime` | When the diagnosis was recorded (DG1-5) |
-
-### nk1 — Next of Kin
+Multiple rows per message (one per specimen).
 
 | Key Fields | Description |
 |---|---|
-| `nk_family_name`, `nk_given_name` | Contact name (NK1-2.1, NK1-2.2) |
-| `relationship_code`, `relationship_text` | Relationship to patient (NK1-3) |
-| `phone_number` | Primary contact number (NK1-5) |
+| `specimen_id` | Specimen identifier (SPM-2) |
+| `specimen_type` | Specimen type — blood, urine, tissue, etc. (SPM-4) |
+| `specimen_source_site` | Body site (SPM-8) |
+| `specimen_collection_datetime` | Collection datetime (SPM-17) |
+| `specimen_received_datetime` | When specimen was received (SPM-18) |
 
-### evn — Event Type
+### Financial / Insurance
+
+#### in1 — Insurance
+
+Multiple rows per message (one per insurance plan).
 
 | Key Fields | Description |
 |---|---|
-| `recorded_datetime` | When the event was recorded (EVN-2) |
-| `event_reason_code` | Reason for the event (EVN-4.1) |
-| `operator_id` | User who triggered the event (EVN-5.1) |
-| `event_occurred` | When the clinical event actually occurred (EVN-6) |
+| `insurance_plan_id`, `insurance_plan_text` | Plan code and name (IN1-2) |
+| `insurance_company_id`, `insurance_company_name` | Company identifier (IN1-3, IN1-4) |
+| `group_number`, `group_name` | Group number and name (IN1-8, IN1-9) |
+| `plan_effective_date`, `plan_expiration_date` | Coverage dates (IN1-12, IN1-13) |
+| `insured_relationship_to_patient` | Relationship — self, spouse, child, etc. (IN1-17) |
+
+#### gt1 — Guarantor
+
+Multiple rows per message (one per guarantor).
+
+| Key Fields | Description |
+|---|---|
+| `guarantor_family_name`, `guarantor_given_name` | Guarantor name (GT1-3) |
+| `guarantor_relationship` | Relationship to patient (GT1-11) |
+| `guarantor_address` | Address (GT1-5) |
+| `guarantor_phone_home`, `guarantor_phone_business` | Phone numbers (GT1-6, GT1-7) |
+| `guarantor_employer_name` | Employer (GT1-16) |
+
+#### ft1 — Financial Transaction
+
+Multiple rows per message (one per charge/payment).
+
+| Key Fields | Description |
+|---|---|
+| `transaction_id` | Unique transaction ID (FT1-2) |
+| `transaction_date` | Transaction date (FT1-4) |
+| `transaction_type` | CG (charge), CR (credit), PA (payment), AJ (adjustment) (FT1-6) |
+| `transaction_code`, `transaction_description` | Charge code (FT1-7) |
+| `transaction_amount_extended` | Extended amount (FT1-11) |
+| `diagnosis_code` | Associated diagnosis (FT1-19) |
+
+### Pharmacy
+
+#### rxa — Pharmacy/Treatment Administration
+
+Multiple rows per message (one per administration event).
+
+| Key Fields | Description |
+|---|---|
+| `administered_code`, `administered_text` | Drug/vaccine code and name (RXA-5) |
+| `administered_amount`, `administered_units` | Dose amount and units (RXA-6, RXA-7) |
+| `administration_start_datetime`, `administration_end_datetime` | Administration times (RXA-3, RXA-4) |
+| `substance_lot_number` | Lot number (RXA-15) |
+| `completion_status` | CP (complete), RE (refused), NA (not administered) (RXA-20) |
+
+### Scheduling
+
+#### sch — Scheduling Activity
+
+One row per scheduling message.
+
+| Key Fields | Description |
+|---|---|
+| `placer_appointment_id`, `filler_appointment_id` | Appointment identifiers (SCH-1, SCH-2) |
+| `event_reason` | Scheduling event reason (SCH-6) |
+| `appointment_reason` | Reason for appointment (SCH-7) |
+| `appointment_type` | Appointment type (SCH-8) |
+| `filler_status_code` | Status — pending, booked, complete, cancelled (SCH-25) |
+
+### Documents
+
+#### txa — Transcription Document Header
+
+One row per document message.
+
+| Key Fields | Description |
+|---|---|
+| `document_type` | Document type (TXA-2) |
+| `unique_document_number` | Unique document identifier (TXA-12) |
+| `origination_datetime` | When the document was originated (TXA-6) |
+| `document_completion_status` | DI (dictated), AU (authenticated), LA (legally authenticated) (TXA-17) |
+| `document_availability_status` | Availability status (TXA-19) |
 
 ---
 
@@ -232,6 +442,7 @@ These can be set per-table in the pipeline configuration:
 All tables share `message_id` (from MSH-10) as a join key:
 
 ```sql
+-- Lab results with patient demographics
 SELECT
     p.patient_family_name,
     p.patient_given_name,
@@ -247,6 +458,25 @@ JOIN healthcare_prod.silver.hl7_obr  r  USING (message_id)
 WHERE r.result_status = 'F'
   AND o.observation_id = '2951-2'   -- Sodium (LOINC)
 ORDER BY o.message_timestamp DESC;
+```
+
+Insurance coverage for admitted patients:
+
+```sql
+SELECT
+    p.patient_family_name,
+    p.patient_given_name,
+    v.patient_class,
+    v.admit_datetime,
+    i.insurance_plan_text,
+    i.group_number,
+    i.plan_effective_date,
+    i.plan_expiration_date
+FROM healthcare_prod.silver.hl7_pid  p
+JOIN healthcare_prod.silver.hl7_pv1  v  USING (message_id)
+JOIN healthcare_prod.silver.hl7_in1  i  USING (message_id)
+WHERE v.patient_class = 'I'
+ORDER BY v.admit_datetime DESC;
 ```
 
 ---
@@ -274,7 +504,7 @@ ORDER BY o.message_timestamp DESC;
 | Symptom | Cause | Fix |
 |---|---|---|
 | Table returns 0 rows | No matching files in `volume_path` | Verify the path and `file_pattern` match actual file locations |
-| `evn` / `al1` tables empty | Those segments absent from your messages | Normal — not all message types include every segment |
+| `evn` / `al1` / `sch` / `txa` tables empty | Those segments absent from your messages | Normal — not all message types include every segment |
 | `message_id` is null | MSH-10 missing from source | Non-standard HL7 — check upstream system configuration |
 | Duplicate records after restart | Pipeline checkpoint cleared | Expected on full-refresh; use triggered schedule to avoid large backlogs |
 | Z-segment columns all null | `segment_type` option not set | Add `segment_type` table option with the exact segment name (e.g. `ZPD`) |
