@@ -78,7 +78,7 @@ The connection can also be created using the standard Unity Catalog API.
 
 ## Supported Objects
 
-The connector exposes one table per HL7 v2 segment type. The list is static and based on the HL7 v2.5.1 specification. Not all messages contain all segment types — the tables you see data in depend on the message types in your HL7v2 store (e.g., ADT, ORU, DFT, SIU).
+The connector exposes one table per HL7 v2 segment type. Schemas follow the HL7 v2.9 specification (the latest version, which is a superset of all prior versions), so every column is present regardless of the message version. Not all messages contain all segment types — the tables you see data in depend on the message types in your HL7v2 store (e.g., ADT, ORU, DFT, SIU).
 
 ### Patient Administration
 
@@ -273,4 +273,4 @@ Follow the Lakeflow Community Connector UI, which will guide you through setting
 - [Google Cloud Healthcare API — HL7v2 Concepts](https://cloud.google.com/healthcare-api/docs/concepts/hl7v2)
 - [Healthcare API — List Messages](https://cloud.google.com/healthcare-api/docs/reference/rest/v1/projects.locations.datasets.hl7V2Stores.messages/list)
 - [Healthcare API — Authentication](https://cloud.google.com/healthcare-api/docs/how-tos/hl7v2-messages)
-- [HL7 v2.5.1 Segment Definitions (Caristix)](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments)
+- [HL7 Version 2.9 Specification](https://www.hl7.eu/HL7v2x/v29/hl7v29.htm)

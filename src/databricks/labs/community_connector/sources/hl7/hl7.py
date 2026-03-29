@@ -3,6 +3,9 @@
 Messages are fetched from a GCP Healthcare API HL7v2 store via REST.  Each HL7
 segment type becomes its own table (msh, pid, pv1, obr, obx, …).
 
+Schemas follow the HL7 v2.9 specification (the latest version, which is a
+superset of all prior versions).
+
 Incremental cursor: ``sendTime`` from the API (RFC3339 timestamp).
 The connector uses a sliding time-window strategy to bound each micro-batch.
 """
@@ -166,6 +169,9 @@ def _extract_msh(seg: HL7Segment) -> dict:
         "receiving_responsible_org": _v(seg.get_component(23, 1)),
         "sending_network_address": _v(seg.get_component(24, 1)),
         "receiving_network_address": _v(seg.get_component(25, 1)),
+        "security_classification_tag": _v(seg.get_component(26, 1)),
+        "security_handling_instructions": _v(seg.get_component(27, 1)),
+        "special_access_restriction": _v(seg.get_field(28)),
     }
 
 
@@ -305,6 +311,8 @@ def _extract_pv1(seg: HL7Segment) -> dict:
         "alternate_visit_id": _v(seg.get_component(50, 1)),
         "visit_indicator": _v(seg.get_field(51)),
         "other_healthcare_provider": _v(seg.get_first_repetition(52)),
+        "service_episode_description": _v(seg.get_field(53)),
+        "service_episode_identifier": _v(seg.get_component(54, 1)),
     }
 
 
@@ -372,6 +380,11 @@ def _extract_obr(seg: HL7Segment) -> dict:
         "medically_necessary_dup_proc_reason": _v(seg.get_component(48, 1)),
         "result_handling": _v(seg.get_component(49, 1)),
         "parent_universal_service_id": _v(seg.get_component(50, 1)),
+        "observation_group_id": _v(seg.get_component(51, 1)),
+        "parent_observation_group_id": _v(seg.get_component(52, 1)),
+        "alternate_placer_order_number_obr": _v(seg.get_component(53, 1)),
+        "parent_order": _v(seg.get_component(54, 1)),
+        "obr_action_code": _v(seg.get_field(55)),
     }
 
 
@@ -420,6 +433,11 @@ def _extract_obx(seg: HL7Segment) -> dict:
         "patient_results_release_category": _v(seg.get_field(26)),
         "root_cause": _v(seg.get_component(27, 1)),
         "local_process_control": _v(seg.get_rep_component(28, 1, 1)),
+        "observation_type": _v(seg.get_field(29)),
+        "observation_sub_type": _v(seg.get_field(30)),
+        "obx_action_code": _v(seg.get_field(31)),
+        "observation_value_absent_reason": _v(seg.get_component(32, 1)),
+        "observation_related_specimen_id": _v(seg.get_component(33, 1)),
     }
 
 
@@ -517,6 +535,8 @@ def _extract_nk1(seg: HL7Segment) -> dict:
         "contact_ssn": _v(seg.get_field(37)),
         "nk_birth_place": _v(seg.get_field(38)),
         "vip_indicator": _v(seg.get_field(39)),
+        "nk_telecommunication_info": _v(seg.get_first_repetition(40)),
+        "contact_telecommunication_info": _v(seg.get_first_repetition(41)),
     }
 
 
@@ -555,6 +575,8 @@ def _extract_pd1(seg: HL7Segment) -> dict:
         "military_branch": _v(seg.get_field(19)),
         "military_rank_grade": _v(seg.get_field(20)),
         "military_status": _v(seg.get_field(21)),
+        "advance_directive_last_verified_date": _v(seg.get_field(22)),
+        "retirement_date": _v(seg.get_field(23)),
     }
 
 
@@ -609,6 +631,7 @@ def _extract_pv2(seg: HL7Segment) -> dict:
         "expected_loa_return_datetime": _parse_dtm(seg.get_field(47)),
         "expected_preadmission_testing_datetime": _parse_dtm(seg.get_field(48)),
         "notify_clergy_code": _v(seg.get_first_repetition(49)),
+        "advance_directive_last_verified_date_pv2": _v(seg.get_field(50)),
     }
 
 
@@ -655,6 +678,16 @@ def _extract_iam(seg: HL7Segment) -> dict:
         "statused_by_person": _v(seg.get_component(18, 1)),
         "statused_by_organization": _v(seg.get_component(19, 1)),
         "statused_at_datetime": _parse_dtm(seg.get_field(20)),
+        "inactivated_by_person": _v(seg.get_component(21, 1)),
+        "inactivated_datetime": _parse_dtm(seg.get_field(22)),
+        "initially_recorded_by_person": _v(seg.get_component(23, 1)),
+        "initially_recorded_datetime": _parse_dtm(seg.get_field(24)),
+        "modified_by_person": _v(seg.get_component(25, 1)),
+        "modified_datetime": _parse_dtm(seg.get_field(26)),
+        "clinician_identified_code": _v(seg.get_component(27, 1)),
+        "initially_recorded_by_organization": _v(seg.get_component(28, 1)),
+        "modified_by_organization": _v(seg.get_component(29, 1)),
+        "inactivated_by_organization": _v(seg.get_component(30, 1)),
     }
 
 
@@ -683,6 +716,11 @@ def _extract_pr1(seg: HL7Segment) -> dict:
         "tissue_type_code": _v(seg.get_rep_component(18, 1, 1)),
         "procedure_identifier": _v(seg.get_component(19, 1)),
         "procedure_action_code": _v(seg.get_field(20)),
+        "drg_procedure_determination_status": _v(seg.get_component(21, 1)),
+        "drg_procedure_relevance": _v(seg.get_component(22, 1)),
+        "treating_organizational_unit": _v(seg.get_field(23)),
+        "respiratory_within_surgery": _v(seg.get_field(24)),
+        "parent_procedure_id": _v(seg.get_component(25, 1)),
     }
 
 
@@ -722,6 +760,13 @@ def _extract_orc(seg: HL7Segment) -> dict:
         "order_type": _v(seg.get_component(29, 1)),
         "enterer_authorization_mode": _v(seg.get_component(30, 1)),
         "parent_universal_service_id": _v(seg.get_component(31, 1)),
+        "advanced_beneficiary_notice_date": _v(seg.get_field(32)),
+        "alternate_placer_order_number": _v(seg.get_component(33, 1)),
+        "order_workflow_profile": _v(seg.get_component(34, 1)),
+        "orc_action_code": _v(seg.get_field(35)),
+        "order_status_date_range": _v(seg.get_field(36)),
+        "order_creation_datetime": _parse_dtm(seg.get_field(37)),
+        "filler_order_group_number": _v(seg.get_component(38, 1)),
     }
 
 
@@ -731,6 +776,11 @@ def _extract_nte(seg: HL7Segment) -> dict:
         "source_of_comment": _v(seg.get_field(2)),
         "comment": _v(seg.get_first_repetition(3)),
         "comment_type": _v(seg.get_component(4, 1)),
+        "entered_by": _v(seg.get_component(5, 1)),
+        "entered_datetime": _parse_dtm(seg.get_field(6)),
+        "effective_start_date": _parse_dtm(seg.get_field(7)),
+        "expiration_date": _parse_dtm(seg.get_field(8)),
+        "coded_comment": _v(seg.get_component(9, 1)),
     }
 
 
@@ -767,6 +817,12 @@ def _extract_spm(seg: HL7Segment) -> dict:
         "container_type": _v(seg.get_component(27, 1)),
         "container_condition": _v(seg.get_component(28, 1)),
         "specimen_child_role": _v(seg.get_component(29, 1)),
+        "accession_id": _v(seg.get_component(30, 1)),
+        "other_specimen_id": _v(seg.get_component(31, 1)),
+        "shipment_id": _v(seg.get_component(32, 1)),
+        "culture_start_datetime": _parse_dtm(seg.get_field(33)),
+        "culture_final_datetime": _parse_dtm(seg.get_field(34)),
+        "spm_action_code": _v(seg.get_field(35)),
     }
 
 
@@ -828,6 +884,8 @@ def _extract_in1(seg: HL7Segment) -> dict:
         "signature_code_date": _v(seg.get_field(51)),
         "insureds_birth_place": _v(seg.get_field(52)),
         "vip_indicator": _v(seg.get_field(53)),
+        "external_health_plan_identifiers": _v(seg.get_component(54, 1)),
+        "insurance_action_code": _v(seg.get_field(55)),
     }
 
 
@@ -930,6 +988,31 @@ def _extract_ft1(seg: HL7Segment) -> dict:
         "ndc_code": _v(seg.get_component(29, 1)),
         "payment_reference_id": _v(seg.get_component(30, 1)),
         "transaction_reference_key": _v(seg.get_first_repetition(31)),
+        "performing_facility": _v(seg.get_component(32, 1)),
+        "ordering_facility": _v(seg.get_component(33, 1)),
+        "item_number": _v(seg.get_component(34, 1)),
+        "model_number": _v(seg.get_field(35)),
+        "special_processing_code": _v(seg.get_component(36, 1)),
+        "clinic_code": _v(seg.get_component(37, 1)),
+        "referral_number": _v(seg.get_component(38, 1)),
+        "authorization_number": _v(seg.get_component(39, 1)),
+        "service_provider_taxonomy_code": _v(seg.get_component(40, 1)),
+        "revenue_code": _v(seg.get_component(41, 1)),
+        "prescription_number": _v(seg.get_field(42)),
+        "ndc_qty_and_uom": _v(seg.get_field(43)),
+        "dme_certificate_of_medical_necessity_transmission_code": _v(seg.get_component(44, 1)),
+        "dme_certification_type_code": _v(seg.get_component(45, 1)),
+        "dme_duration_value": _v(seg.get_field(46)),
+        "dme_certification_revision_date": _v(seg.get_field(47)),
+        "dme_initial_certification_date": _v(seg.get_field(48)),
+        "dme_last_certification_date": _v(seg.get_field(49)),
+        "dme_length_of_medical_necessity_days": _v(seg.get_field(50)),
+        "dme_rental_price": _v(seg.get_field(51)),
+        "dme_purchase_price": _v(seg.get_field(52)),
+        "dme_frequency_code": _v(seg.get_component(53, 1)),
+        "dme_certification_condition_indicator": _v(seg.get_field(54)),
+        "dme_condition_indicator_code": _v(seg.get_component(55, 1)),
+        "service_reason_code": _v(seg.get_component(56, 1)),
     }
 
 
@@ -963,6 +1046,9 @@ def _extract_rxa(seg: HL7Segment) -> dict:
         "administered_drug_strength_volume_units": _v(seg.get_component(24, 1)),
         "administered_barcode_identifier": _v(seg.get_component(25, 1)),
         "pharmacy_order_type": _v(seg.get_field(26)),
+        "administer_at": _v(seg.get_field(27)),
+        "administered_at_address": _v(seg.get_field(28)),
+        "administered_tag_identifier": _v(seg.get_component(29, 1)),
     }
 
 
@@ -995,6 +1081,7 @@ def _extract_sch(seg: HL7Segment) -> dict:
         "filler_status_code": _v(seg.get_component(25, 1)),
         "placer_order_number": _v(seg.get_rep_component(26, 1, 1)),
         "filler_order_number": _v(seg.get_rep_component(27, 1, 1)),
+        "alternate_placer_order_group_number": _v(seg.get_component(28, 1)),
     }
 
 
@@ -1023,6 +1110,11 @@ def _extract_txa(seg: HL7Segment) -> dict:
         "document_change_reason": _v(seg.get_field(21)),
         "authentication_person_time_stamp": _v(seg.get_first_repetition(22)),
         "distributed_copies": _v(seg.get_rep_component(23, 1, 1)),
+        "folder_assignment": _v(seg.get_component(24, 1)),
+        "document_title": _v(seg.get_field(25)),
+        "agreed_due_datetime": _parse_dtm(seg.get_field(26)),
+        "creating_facility": _v(seg.get_component(27, 1)),
+        "creating_specialty": _v(seg.get_component(28, 1)),
     }
 
 

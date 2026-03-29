@@ -1,6 +1,6 @@
 """Lightweight zero-dependency HL7 v2 message parser.
 
-Handles HL7 v2.1–v2.8 pipe-delimited messages. No external libraries required.
+Handles HL7 v2.1–v2.9 pipe-delimited messages. No external libraries required.
 
 Usage:
     from hl7_parser import parse_message

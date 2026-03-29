@@ -39,19 +39,19 @@ creds.refresh(google.auth.transport.requests.Request())
 
 ## **Object List**
 
-The object list is **static** — defined by the HL7 v2 specification. Each segment type maps to one table. The connector supports the following segments, organized by functional domain:
+The object list is **static** — defined by the HL7 v2 specification. Each segment type maps to one table. Schemas follow the HL7 v2.9 specification (the latest version, which is a superset of all prior versions). The connector supports the following segments, organized by functional domain:
 
 ### Patient Administration
 
 | Table Name | HL7 Segment | Fields | Description |
 |---|---|---|---|
-| `msh` | MSH | 21 | Message Header — one row per HL7 message |
+| `msh` | MSH | 28 | Message Header — one row per HL7 message |
 | `evn` | EVN | 7 | Event Type — trigger event metadata |
-| `pid` | PID | 39 | Patient Identification — demographics and identifiers |
-| `pd1` | PD1 | 21 | Patient Additional Demographic — living will, organ donor, primary facility |
-| `pv1` | PV1 | 52 | Patient Visit — encounter/admission data |
-| `pv2` | PV2 | 49 | Patient Visit Additional — admit reason, expected dates, mode of arrival |
-| `nk1` | NK1 | 39 | Next of Kin / Associated Parties |
+| `pid` | PID | 40 | Patient Identification — demographics and identifiers |
+| `pd1` | PD1 | 23 | Patient Additional Demographic — living will, organ donor, primary facility |
+| `pv1` | PV1 | 54 | Patient Visit — encounter/admission data |
+| `pv2` | PV2 | 50 | Patient Visit Additional — admit reason, expected dates, mode of arrival |
+| `nk1` | NK1 | 41 | Next of Kin / Associated Parties |
 | `mrg` | MRG | 7 | Merge Patient Information — prior identifiers for patient merges |
 
 ### Clinical
@@ -59,45 +59,45 @@ The object list is **static** — defined by the HL7 v2 specification. Each segm
 | Table Name | HL7 Segment | Fields | Description |
 |---|---|---|---|
 | `al1` | AL1 | 6 | Patient Allergy Information (snapshot mode) |
-| `iam` | IAM | 20 | Patient Adverse Reaction Information (action code mode — newer replacement for AL1) |
-| `dg1` | DG1 | 21 | Diagnosis — admitting, working, and final diagnoses |
-| `pr1` | PR1 | 20 | Procedures — surgical, diagnostic, and therapeutic procedures |
+| `iam` | IAM | 30 | Patient Adverse Reaction Information (action code mode — newer replacement for AL1) |
+| `dg1` | DG1 | 26 | Diagnosis — admitting, working, and final diagnoses |
+| `pr1` | PR1 | 25 | Procedures — surgical, diagnostic, and therapeutic procedures |
 
 ### Orders & Results
 
 | Table Name | HL7 Segment | Fields | Description |
 |---|---|---|---|
-| `orc` | ORC | 31 | Common Order — order control, status, and provider info |
-| `obr` | OBR | 50 | Observation Request — lab/radiology orders |
-| `obx` | OBX | 25 | Observation Result — individual test results |
-| `nte` | NTE | 4 | Notes and Comments — free-text annotations attached to orders/results |
-| `spm` | SPM | 29 | Specimen — specimen type, collection, and handling details |
+| `orc` | ORC | 38 | Common Order — order control, status, and provider info |
+| `obr` | OBR | 55 | Observation Request — lab/radiology orders |
+| `obx` | OBX | 33 | Observation Result — individual test results |
+| `nte` | NTE | 9 | Notes and Comments — free-text annotations attached to orders/results |
+| `spm` | SPM | 35 | Specimen — specimen type, collection, and handling details |
 
 ### Financial / Insurance
 
 | Table Name | HL7 Segment | Fields | Description |
 |---|---|---|---|
-| `in1` | IN1 | 53 | Insurance — policy coverage and billing information |
+| `in1` | IN1 | 55 | Insurance — policy coverage and billing information |
 | `gt1` | GT1 | 57 | Guarantor — financially responsible party |
-| `ft1` | FT1 | 31 | Financial Transaction — charges, payments, adjustments |
+| `ft1` | FT1 | 56 | Financial Transaction — charges, payments, adjustments |
 
 ### Pharmacy
 
 | Table Name | HL7 Segment | Fields | Description |
 |---|---|---|---|
-| `rxa` | RXA | 26 | Pharmacy/Treatment Administration — medication administration records |
+| `rxa` | RXA | 29 | Pharmacy/Treatment Administration — medication administration records |
 
 ### Scheduling
 
 | Table Name | HL7 Segment | Fields | Description |
 |---|---|---|---|
-| `sch` | SCH | 27 | Scheduling Activity Information — appointment details |
+| `sch` | SCH | 28 | Scheduling Activity Information — appointment details |
 
 ### Documents
 
 | Table Name | HL7 Segment | Fields | Description |
 |---|---|---|---|
-| `txa` | TXA | 23 | Transcription Document Header — document metadata and status |
+| `txa` | TXA | 28 | Transcription Document Header — document metadata and status |
 
 Additionally, arbitrary **Z-segments** (site-specific custom segments) can be ingested using the `segment_type` table option, producing a generic schema with `field_1` … `field_25` columns.
 

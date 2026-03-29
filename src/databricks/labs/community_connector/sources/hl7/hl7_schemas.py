@@ -1,8 +1,9 @@
 """Spark StructType schemas for HL7 v2 segment tables.
 
-Every schema is a *superset* of all fields defined across HL7 v2.1–v2.8.
-Fields absent in a given message version are returned as ``None`` by the
-connector, and Spark receives them as ``null``.
+Every schema follows the HL7 v2.9 specification — the latest version, which
+is itself a superset of all prior versions (v2.1–v2.8).  Fields absent in a
+given message version are returned as ``None`` by the connector, and Spark
+receives them as ``null``.
 
 All wire-format values are strings; only ``set_id`` / sequence-number
 fields are typed as ``LongType`` because they are guaranteed-numeric.
@@ -227,6 +228,9 @@ MSH_SCHEMA = StructType(
         _s("receiving_responsible_org",        "Organization accountable for the receiving application (MSH-23.1, v2.7+)"),
         _s("sending_network_address",          "Network address of the sending application (MSH-24.1, v2.7+)"),
         _s("receiving_network_address",        "Network address of the receiving application (MSH-25.1, v2.7+)"),
+        _s("security_classification_tag",      "Security classification tag for the message (MSH-26.1, v2.7.1+)"),
+        _s("security_handling_instructions",   "Security handling instructions (MSH-27.1, v2.7.1+)"),
+        _s("special_access_restriction",       "Special access restriction instructions (MSH-28, v2.7.1+)"),
     ]
 )
 
@@ -376,6 +380,8 @@ PV1_SCHEMA = StructType(
         _s("alternate_visit_id",           "Alternate visit identifier (PV1-50.1)"),
         _s("visit_indicator",              "Visit indicator: V=Visit level, A=Account level (PV1-51)"),
         _s("other_healthcare_provider",    "Other healthcare provider(s) for the visit (PV1-52, deprecated in v2.7)"),
+        _s("service_episode_description",   "Free-text description of the service episode (PV1-53, v2.8+)"),
+        _s("service_episode_identifier",    "Unique identifier for the service episode (PV1-54.1, v2.8+)"),
     ]
 )
 
@@ -448,6 +454,11 @@ OBR_SCHEMA = StructType(
         _s("medically_necessary_dup_proc_reason", "Reason a duplicate procedure is medically necessary (OBR-48.1, v2.5+)"),
         _s("result_handling",                     "How the result should be handled, e.g. F=Film-with-patient (OBR-49.1, v2.6+)"),
         _s("parent_universal_service_id",         "Universal service ID of the parent order (OBR-50.1, v2.7+)"),
+        _s("observation_group_id",                "Observation group identifier (OBR-51.1, v2.8.2+)"),
+        _s("parent_observation_group_id",         "Parent observation group identifier (OBR-52.1, v2.8.2+)"),
+        _s("alternate_placer_order_number_obr",   "Alternate placer order number (OBR-53.1, v2.8.2+)"),
+        _s("parent_order",                        "Parent order identifier (OBR-54.1, v2.9+)"),
+        _s("obr_action_code",                     "Action code (OBR-55, v2.9+)"),
     ]
 )
 
@@ -501,6 +512,11 @@ OBX_SCHEMA = StructType(
         _s("patient_results_release_category","Category controlling release of results to the patient (OBX-26, v2.8+)"),
         _s("root_cause",                      "Root cause for a corrected or amended result (OBX-27.1, v2.8+)"),
         _s("local_process_control",           "Site-defined codes for local processing workflow (OBX-28.1, v2.8+)"),
+        _s("observation_type",                "Observation type (OBX-29, v2.8.2+)"),
+        _s("observation_sub_type",            "Observation sub-type (OBX-30, v2.8.2+)"),
+        _s("obx_action_code",                 "Action code (OBX-31, v2.9+)"),
+        _s("observation_value_absent_reason", "Reason the observation value is absent (OBX-32.1, v2.9+)"),
+        _s("observation_related_specimen_id", "Observation related specimen identifier (OBX-33.1, v2.9+)"),
     ]
 )
 
@@ -613,6 +629,8 @@ NK1_SCHEMA = StructType(
         _s("contact_ssn",                "Social Security Number of the contact person (NK1-37, deprecated in v2.7)"),
         _s("nk_birth_place",             "Birth place of the next of kin (NK1-38, v2.6+)"),
         _s("vip_indicator",              "VIP flag for the next of kin (NK1-39, v2.6+)"),
+        _s("nk_telecommunication_info",  "Next of kin telecommunication information (NK1-40, v2.7+)"),
+        _s("contact_telecommunication_info", "Contact person telecommunication information (NK1-41, v2.7+)"),
     ]
 )
 
@@ -661,6 +679,8 @@ PD1_SCHEMA = StructType(
         _s("military_branch",                          "Military branch (PD1-19): USA=Army, USN=Navy, USAF=Air Force, USMC=Marines"),
         _s("military_rank_grade",                      "Military rank or grade (PD1-20)"),
         _s("military_status",                          "Military status (PD1-21): ACT=Active duty, RET=Retired, DEC=Deceased"),
+        _s("advance_directive_last_verified_date",     "Date advance directive was last verified (PD1-22, v2.8+)"),
+        _s("retirement_date",                          "Date the patient retired (PD1-23, v2.9+)"),
     ]
 )
 
@@ -720,6 +740,7 @@ PV2_SCHEMA = StructType(
         _ts("expected_loa_return_datetime",            "Expected leave of absence return date/time (PV2-47)"),
         _ts("expected_preadmission_testing_datetime",  "Expected pre-admission testing date/time (PV2-48)"),
         _s("notify_clergy_code",                       "Notify clergy code (PV2-49)"),
+        _s("advance_directive_last_verified_date_pv2", "Date advance directive was last verified (PV2-50, v2.9+)"),
     ]
 )
 
@@ -776,6 +797,16 @@ IAM_SCHEMA = StructType(
         _s("statused_by_person",                  "Person who set the status (IAM-18.1)"),
         _s("statused_by_organization",            "Organization that set the status (IAM-19.1)"),
         _ts("statused_at_datetime",               "Date/time status was set (IAM-20)"),
+        _s("inactivated_by_person",               "Person who inactivated the record (IAM-21.1, v2.6+)"),
+        _ts("inactivated_datetime",               "Date/time the record was inactivated (IAM-22, v2.6+)"),
+        _s("initially_recorded_by_person",        "Person who initially recorded the reaction (IAM-23.1, v2.6+)"),
+        _ts("initially_recorded_datetime",        "Date/time the reaction was initially recorded (IAM-24, v2.6+)"),
+        _s("modified_by_person",                  "Person who last modified the record (IAM-25.1, v2.6+)"),
+        _ts("modified_datetime",                  "Date/time the record was last modified (IAM-26, v2.6+)"),
+        _s("clinician_identified_code",           "Clinician-identified allergen code (IAM-27.1, v2.7+)"),
+        _s("initially_recorded_by_organization",  "Organization that initially recorded the reaction (IAM-28.1, v2.9+)"),
+        _s("modified_by_organization",            "Organization that last modified the record (IAM-29.1, v2.9+)"),
+        _s("inactivated_by_organization",         "Organization that inactivated the record (IAM-30.1, v2.9+)"),
     ]
 )
 
@@ -809,6 +840,11 @@ PR1_SCHEMA = StructType(
         _s("tissue_type_code",             "Tissue type code (PR1-18.1)"),
         _s("procedure_identifier",         "Unique procedure identifier (PR1-19.1)"),
         _s("procedure_action_code",        "Action code (PR1-20): A=Add, D=Delete, U=Update"),
+        _s("drg_procedure_determination_status", "DRG procedure determination status (PR1-21.1, v2.6+)"),
+        _s("drg_procedure_relevance",      "DRG procedure relevance (PR1-22.1, v2.6+)"),
+        _s("treating_organizational_unit",  "Treating organizational unit (PR1-23, v2.6+)"),
+        _s("respiratory_within_surgery",    "Respiratory within surgery indicator (PR1-24, v2.7+)"),
+        _s("parent_procedure_id",           "Parent procedure identifier (PR1-25.1, v2.7+)"),
     ]
 )
 
@@ -854,6 +890,13 @@ ORC_SCHEMA = StructType(
         _s("order_type",                               "Order type (ORC-29.1)"),
         _s("enterer_authorization_mode",               "Enterer authorization mode (ORC-30.1)"),
         _s("parent_universal_service_id",              "Parent universal service identifier (ORC-31.1)"),
+        _s("advanced_beneficiary_notice_date",          "Advanced beneficiary notice date (ORC-32, v2.6+)"),
+        _s("alternate_placer_order_number",             "Alternate placer order number (ORC-33.1, v2.7+)"),
+        _s("order_workflow_profile",                    "Order workflow profile (ORC-34.1, v2.8.2+)"),
+        _s("orc_action_code",                           "Action code (ORC-35, v2.9+)"),
+        _s("order_status_date_range",                   "Order status date range (ORC-36, v2.9+)"),
+        _ts("order_creation_datetime",                  "Order creation date/time (ORC-37, v2.9+)"),
+        _s("filler_order_group_number",                 "Filler order group number (ORC-38.1, v2.9+)"),
     ]
 )
 
@@ -868,6 +911,11 @@ NTE_SCHEMA = StructType(
         _s("source_of_comment",    "Source of comment (NTE-2): L=Ancillary/Filler, P=Orderer/Placer, O=Other"),
         _s("comment",              "Free-text comment/note content (NTE-3); may contain formatted text"),
         _s("comment_type",         "Comment type code (NTE-4.1)"),
+        _s("entered_by",           "Person who entered the note (NTE-5.1, v2.6+)"),
+        _ts("entered_datetime",    "Date/time the note was entered (NTE-6, v2.6+)"),
+        _ts("effective_start_date","Effective start date of the note (NTE-7, v2.6+)"),
+        _ts("expiration_date",     "Expiration date of the note (NTE-8, v2.6+)"),
+        _s("coded_comment",        "Coded comment (NTE-9.1, v2.9+)"),
     ]
 )
 
@@ -909,6 +957,12 @@ SPM_SCHEMA = StructType(
         _s("container_type",                  "Container type (SPM-27.1)"),
         _s("container_condition",             "Container condition (SPM-28.1)"),
         _s("specimen_child_role",             "Specimen child role (SPM-29.1)"),
+        _s("accession_id",                    "Accession identifier (SPM-30.1, v2.7+)"),
+        _s("other_specimen_id",               "Other specimen identifier (SPM-31.1, v2.7+)"),
+        _s("shipment_id",                     "Shipment identifier (SPM-32.1, v2.7+)"),
+        _ts("culture_start_datetime",         "Culture start date/time (SPM-33, v2.9+)"),
+        _ts("culture_final_datetime",         "Culture final date/time (SPM-34, v2.9+)"),
+        _s("spm_action_code",                 "Action code (SPM-35, v2.9+)"),
     ]
 )
 
@@ -975,6 +1029,8 @@ IN1_SCHEMA = StructType(
         _s("signature_code_date",              "Signature code date (IN1-51)"),
         _s("insureds_birth_place",             "Insured's birth place (IN1-52)"),
         _s("vip_indicator",                    "VIP indicator (IN1-53)"),
+        _s("external_health_plan_identifiers", "External health plan identifiers (IN1-54.1, v2.8+)"),
+        _s("insurance_action_code",            "Insurance action code (IN1-55, v2.9+)"),
     ]
 )
 
@@ -1087,6 +1143,31 @@ FT1_SCHEMA = StructType(
         _s("ndc_code",                                "National Drug Code (FT1-29.1)"),
         _s("payment_reference_id",                    "Payment reference (FT1-30.1)"),
         _s("transaction_reference_key",               "Transaction reference key (FT1-31)"),
+        _s("performing_facility",                     "Performing facility (FT1-32.1, v2.6+)"),
+        _s("ordering_facility",                       "Ordering facility (FT1-33.1, v2.6+)"),
+        _s("item_number",                             "Item number (FT1-34.1, v2.6+)"),
+        _s("model_number",                            "Model number (FT1-35, v2.6+)"),
+        _s("special_processing_code",                 "Special processing code (FT1-36.1, v2.6+)"),
+        _s("clinic_code",                             "Clinic code (FT1-37.1, v2.6+)"),
+        _s("referral_number",                         "Referral number (FT1-38.1, v2.6+)"),
+        _s("authorization_number",                    "Authorization number (FT1-39.1, v2.6+)"),
+        _s("service_provider_taxonomy_code",          "Service provider taxonomy code (FT1-40.1, v2.6+)"),
+        _s("revenue_code",                            "Revenue code (FT1-41.1, v2.6+)"),
+        _s("prescription_number",                     "Prescription number (FT1-42, v2.6+)"),
+        _s("ndc_qty_and_uom",                         "NDC quantity and unit of measure (FT1-43, v2.6+)"),
+        _s("dme_certificate_of_medical_necessity_transmission_code", "DME certificate of medical necessity transmission code (FT1-44.1, v2.9+)"),
+        _s("dme_certification_type_code",             "DME certification type code (FT1-45.1, v2.9+)"),
+        _s("dme_duration_value",                      "DME duration value (FT1-46, v2.9+)"),
+        _s("dme_certification_revision_date",         "DME certification revision date (FT1-47, v2.9+)"),
+        _s("dme_initial_certification_date",          "DME initial certification date (FT1-48, v2.9+)"),
+        _s("dme_last_certification_date",             "DME last certification date (FT1-49, v2.9+)"),
+        _s("dme_length_of_medical_necessity_days",    "DME length of medical necessity in days (FT1-50, v2.9+)"),
+        _s("dme_rental_price",                        "DME rental price (FT1-51, v2.9+)"),
+        _s("dme_purchase_price",                      "DME purchase price (FT1-52, v2.9+)"),
+        _s("dme_frequency_code",                      "DME frequency code (FT1-53.1, v2.9+)"),
+        _s("dme_certification_condition_indicator",   "DME certification condition indicator (FT1-54, v2.9+)"),
+        _s("dme_condition_indicator_code",            "DME condition indicator code (FT1-55.1, v2.9+)"),
+        _s("service_reason_code",                     "Service reason code (FT1-56.1, v2.9+)"),
     ]
 )
 
@@ -1125,6 +1206,9 @@ RXA_SCHEMA = StructType(
         _s("administered_drug_strength_volume_units",  "Drug strength volume units (RXA-24.1)"),
         _s("administered_barcode_identifier",          "Barcode identifier (RXA-25.1)"),
         _s("pharmacy_order_type",                      "Pharmacy order type (RXA-26)"),
+        _s("administer_at",                            "Administration location (RXA-27, v2.6+)"),
+        _s("administered_at_address",                  "Administered-at address (RXA-28, v2.6+)"),
+        _s("administered_tag_identifier",              "Administered tag identifier (RXA-29.1, v2.9+)"),
     ]
 )
 
@@ -1162,6 +1246,7 @@ SCH_SCHEMA = StructType(
         _s("filler_status_code",           "Filler status code (SCH-25.1)"),
         _s("placer_order_number",          "Placer order number (SCH-26.1)"),
         _s("filler_order_number",          "Filler order number (SCH-27.1)"),
+        _s("alternate_placer_order_group_number", "Alternate placer order group number (SCH-28.1, v2.9+)"),
     ]
 )
 
@@ -1195,6 +1280,11 @@ TXA_SCHEMA = StructType(
         _s("document_change_reason",               "Reason for document change (TXA-21)"),
         _s("authentication_person_time_stamp",     "Authenticator with timestamp (TXA-22)"),
         _s("distributed_copies",                   "Recipients of distributed copies (TXA-23.1)"),
+        _s("folder_assignment",                    "Folder assignment (TXA-24.1, v2.6+)"),
+        _s("document_title",                       "Document title (TXA-25, v2.6+)"),
+        _ts("agreed_due_datetime",                 "Agreed due date/time (TXA-26, v2.8+)"),
+        _s("creating_facility",                    "Creating facility (TXA-27.1, v2.8+)"),
+        _s("creating_specialty",                   "Creating specialty (TXA-28.1, v2.8+)"),
     ]
 )
 
