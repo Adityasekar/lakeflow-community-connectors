@@ -25,12 +25,12 @@ from google.oauth2 import service_account as google_sa
 from pyspark.sql.types import StructType
 
 from databricks.labs.community_connector.interface import LakeflowConnect
-from databricks.labs.community_connector.sources.hl7.hl7_parser import (
+from databricks.labs.community_connector.sources.hl7_v2.hl7_v2_parser import (
     HL7Message,
     HL7Segment,
     parse_message,
 )
-from databricks.labs.community_connector.sources.hl7.hl7_schemas import (
+from databricks.labs.community_connector.sources.hl7_v2.hl7_v2_schemas import (
     SEGMENT_TABLES,
     TABLE_DESCRIPTIONS,
     get_schema,
@@ -1194,7 +1194,7 @@ def _split_messages(text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-class HL7LakeflowConnect(LakeflowConnect):
+class HL7V2LakeflowConnect(LakeflowConnect):
     """LakeflowConnect implementation for HL7 v2 messages from GCP Healthcare API.
 
     Fetches messages from a Google Cloud Healthcare API HL7v2 store.
