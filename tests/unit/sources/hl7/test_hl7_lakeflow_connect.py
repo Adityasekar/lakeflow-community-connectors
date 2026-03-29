@@ -7,6 +7,7 @@ To test against a real volume, update configs/dev_config.json and remove
 the cls.config override in setup_class below.
 """
 
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -109,8 +110,8 @@ class TestHL7Connector(LakeflowConnectTests):
         assert row.get("patient_given_name") == "John", (
             f"Expected patient_given_name='John', got {row.get('patient_given_name')!r}"
         )
-        assert row.get("date_of_birth") == "19700315", (
-            f"Expected date_of_birth='19700315', got {row.get('date_of_birth')!r}"
+        assert row.get("date_of_birth") == datetime(1970, 3, 15), (
+            f"Expected date_of_birth=datetime(1970, 3, 15), got {row.get('date_of_birth')!r}"
         )
         assert row.get("administrative_sex") == "M", (
             f"Expected administrative_sex='M', got {row.get('administrative_sex')!r}"

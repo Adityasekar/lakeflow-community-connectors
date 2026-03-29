@@ -7,13 +7,22 @@
 # its own Delta table, enabling structured analytics over clinical data.
 #
 # Supported tables (segment types):
-#   msh  - Message Header       pid  - Patient Identification
-#   pv1  - Patient Visit        obr  - Observation Request
-#   obx  - Observation Result   al1  - Patient Allergy
-#   dg1  - Diagnosis            nk1  - Next of Kin
-#   evn  - Event Type
+#   msh  - Message Header              evn  - Event Type
+#   pid  - Patient Identification      pd1  - Patient Additional Demographic
+#   pv1  - Patient Visit               pv2  - Patient Visit Additional
+#   nk1  - Next of Kin / Associated    mrg  - Merge Patient Information
+#   al1  - Patient Allergy             iam  - Patient Adverse Reaction
+#   dg1  - Diagnosis                   pr1  - Procedures
+#   orc  - Common Order                obr  - Observation Request
+#   obx  - Observation Result          nte  - Notes and Comments
+#   spm  - Specimen                    in1  - Insurance
+#   gt1  - Guarantor                   ft1  - Financial Transaction
+#   rxa  - Pharmacy/Treatment Admin    sch  - Scheduling Activity
+#   txa  - Transcription Document
 #
 # Custom / Z-segments are supported via the segment_type table option.
+# The connector uses file modification timestamp (mtime) as an incremental
+# cursor and processes files in batches to manage memory and throughput.
 
 # ============================================================================
 # Connection Parameters
@@ -35,12 +44,16 @@ connection:
       required: false
       description: >
         Glob pattern used to match HL7 files within the volume_path.
-        Defaults to *.hl7.  Use **/*.hl7 for recursive directory search,
+        Defaults to *.hl7. Use **/*.hl7 for recursive directory search,
         or *.txt if files use the .txt extension.
 
 # ============================================================================
 # External Options Allowlist
 # These table-specific options can be passed per-table in the pipeline
 # configuration via externalOptionsAllowList on the UC connection.
+# Options include:
+#   - segment_type: Override the segment type for the table (for custom/Z-segments)
+#   - max_records_per_batch: Maximum number of records to read in a micro-batch
+#                             (applies per table; connector-level default is 10,000)
 # ============================================================================
-external_options_allowlist: "volume_path,file_pattern,segment_type,max_records_per_batch"
+external_options_allowlist: "segment_type,max_records_per_batch"

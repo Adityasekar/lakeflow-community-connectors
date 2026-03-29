@@ -1135,25 +1135,33 @@ class HL7LakeflowConnect(LakeflowConnect):
             except (ValueError, TypeError):
                 cursor = None
 
-        files = self._list_files(cursor)
-        if not files:
-            return iter([]), start_offset or {"cursor": "0"}
+        # Try FUSE filesystem access (classic compute). On serverless, FUSE is
+        # sandboxed out; catch PermissionError and fall back to Spark binaryFile.
+        try:
+            files = self._list_files(cursor)
+        except PermissionError:
+            files = None  # trigger Spark fallback below
 
-        records: list[dict] = []
-        max_mtime: float = cursor or 0.0
-
-        for file_path, mtime in files:
-            if len(records) >= max_records:
-                break
-            max_mtime = max(max_mtime, mtime)
-            try:
-                new_records = self._read_file(file_path, segment_type)
-                records.extend(new_records)
-            except Exception as exc:  # pylint: disable=broad-except
-                warnings.warn(f"Skipping {file_path}: {exc}")
+        if files is not None:
+            # Classic compute path: read via local filesystem.
+            if not files:
+                return iter([]), start_offset or {"cursor": "0"}
+            records: list[dict] = []
+            max_mtime: float = cursor or 0.0
+            for file_path, mtime in files:
+                if len(records) >= max_records:
+                    break
+                max_mtime = max(max_mtime, mtime)
+                try:
+                    records.extend(self._read_file(file_path, segment_type))
+                except Exception as exc:  # pylint: disable=broad-except
+                    warnings.warn(f"Skipping {file_path}: {exc}")
+        else:
+            # Serverless path: read via Spark binaryFile (no FUSE required).
+            records, max_mtime = self._read_files_spark(cursor, segment_type, max_records)
 
         if not records:
-            return iter([]), {"cursor": str(max_mtime)}
+            return iter([]), {"cursor": str(max_mtime)} if max_mtime else (start_offset or {"cursor": "0"})
 
         end_offset = {"cursor": str(max_mtime)}
         if start_offset and start_offset == end_offset:
@@ -1180,10 +1188,18 @@ class HL7LakeflowConnect(LakeflowConnect):
         When ``after_mtime`` is None, all matching files are returned.
         """
         try:
+            if not self._volume_path.exists():
+                raise FileNotFoundError(
+                    f"Volume path not found: {self._volume_path}. Verify the path is correct."
+                )
             matched = list(self._volume_path.glob(self._file_pattern))
+        except PermissionError as exc:
+            raise PermissionError(
+                f"Permission denied accessing {self._volume_path}. "
+                "Grant READ VOLUME on the UC Volume to the pipeline cluster's service principal."
+            ) from exc
         except (OSError, ValueError) as exc:
-            warnings.warn(f"Cannot list files at {self._volume_path}: {exc}")
-            return []
+            raise OSError(f"Cannot list files at {self._volume_path}: {exc}") from exc
 
         result: list[tuple[Path, float]] = []
         for p in matched:
@@ -1202,7 +1218,10 @@ class HL7LakeflowConnect(LakeflowConnect):
     def _read_file(self, file_path: Path, segment_type: str) -> list[dict]:
         """Parse one HL7 file and return records for *segment_type*."""
         text = file_path.read_text(encoding="utf-8", errors="replace")
-        source_file = file_path.name
+        return self._parse_content(text, file_path.name, segment_type)
+
+    def _parse_content(self, text: str, source_file: str, segment_type: str) -> list[dict]:
+        """Parse HL7 text content and return records for *segment_type*."""
         records: list[dict] = []
 
         for msg_text in _split_messages(text):
@@ -1225,3 +1244,55 @@ class HL7LakeflowConnect(LakeflowConnect):
                     records.append(row)
 
         return records
+
+    def _read_files_spark(
+        self, cursor: float | None, segment_type: str, max_records: int
+    ) -> tuple[list[dict], float]:
+        """Read HL7 files via Spark binaryFile — works on serverless (no FUSE needed)."""
+        from pyspark.sql import SparkSession  # pylint: disable=import-outside-toplevel
+        from pyspark.sql import functions as F  # pylint: disable=import-outside-toplevel
+
+        spark = SparkSession.getActiveSession()
+        if spark is None:
+            raise RuntimeError(
+                "No active SparkSession found. Cannot read HL7 files from Volume on serverless."
+            )
+
+        recursive = "**" in self._file_pattern
+        glob_filter = self._file_pattern.replace("**/", "") if recursive else self._file_pattern
+
+        try:
+            df = (
+                spark.read.format("binaryFile")
+                .option("pathGlobFilter", glob_filter)
+                .option("recursiveFileLookup", str(recursive).lower())
+                .load(str(self._volume_path))
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            raise OSError(f"Cannot read files from {self._volume_path} via Spark: {exc}") from exc
+
+        if cursor is not None:
+            df = df.filter(F.unix_timestamp("modificationTime") > cursor)
+
+        rows = (
+            df.select("path", F.unix_timestamp("modificationTime").alias("mtime"), "content")
+            .orderBy("mtime")
+            .collect()
+        )
+
+        records: list[dict] = []
+        max_mtime: float = cursor or 0.0
+
+        for row in rows:
+            if len(records) >= max_records:
+                break
+            mtime = float(row["mtime"])
+            max_mtime = max(max_mtime, mtime)
+            source_file = row["path"].rstrip("/").split("/")[-1]
+            text = row["content"].decode("utf-8", errors="replace")
+            try:
+                records.extend(self._parse_content(text, source_file, segment_type))
+            except Exception as exc:  # pylint: disable=broad-except
+                warnings.warn(f"Skipping {source_file}: {exc}")
+
+        return records, max_mtime
