@@ -7,11 +7,13 @@ connector, and Spark receives them as ``null``.
 All wire-format values are strings; only ``set_id`` / sequence-number
 fields are typed as ``LongType`` because they are guaranteed-numeric.
 
-Every table includes four common metadata columns:
+Every table includes six common metadata columns:
     message_id        — MSH-10 (join key across all segment tables)
     message_timestamp — MSH-7  (raw HL7 DTM string, cursor field)
     hl7_version       — MSH-12 (e.g. "2.5.1")
-    source_file       — basename of the source .hl7 file
+    source_file       — GCP Healthcare API resource name of the source message
+    send_time         — RFC3339 sendTime from the API (incremental cursor)
+    raw_segment       — raw pipe-delimited segment text for lossless recovery
 """
 
 from pyspark.sql.types import LongType, StringType, StructField, StructType
@@ -23,10 +25,10 @@ from pyspark.sql.types import LongType, StringType, StructField, StructType
 def _s(name: str, comment: str = "") -> StructField:
     """Nullable StringType field.
 
-    The *comment* parameter is retained for documentation and for the
-    ``apply_comments.py`` notebook but is NOT stored in StructField metadata.
-    Arrow metadata mismatches between the JVM and Python data-source workers
-    cause ARROW_TYPE_MISMATCH errors when StructField metadata is present.
+    The *comment* parameter is used for inline documentation only and is NOT
+    stored in StructField metadata.  Arrow metadata mismatches between the JVM
+    and Python data-source workers cause ARROW_TYPE_MISMATCH errors when
+    StructField metadata is present.
     """
     return StructField(name, StringType(), nullable=True)
 
