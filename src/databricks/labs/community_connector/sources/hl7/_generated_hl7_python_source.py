@@ -12,7 +12,6 @@ from decimal import Decimal
 from typing import Any, Iterator, Sequence
 import json
 import re
-import sys
 import time
 
 from google.auth.transport import requests as google_auth_requests
@@ -763,10 +762,10 @@ def register_lakeflow_source(spark):
     def _s(name: str, comment: str = "") -> StructField:
         """Nullable StringType field.
 
-        The *comment* parameter is retained for documentation and for the
-        ``apply_comments.py`` notebook but is NOT stored in StructField metadata.
-        Arrow metadata mismatches between the JVM and Python data-source workers
-        cause ARROW_TYPE_MISMATCH errors when StructField metadata is present.
+        The *comment* parameter is used for inline documentation only and is NOT
+        stored in StructField metadata.  Arrow metadata mismatches between the JVM
+        and Python data-source workers cause ARROW_TYPE_MISMATCH errors when
+        StructField metadata is present.
         """
         return StructField(name, StringType(), nullable=True)
 
@@ -957,7 +956,10 @@ def register_lakeflow_source(spark):
             _s("character_set",                    "Character encoding used in the message (MSH-18), e.g. ASCII, UTF-8, 8859/1"),
             _s("principal_language",               "Primary language of the message content (MSH-19.1)"),
             _s("alt_character_set_handling",       "Alternate character set handling scheme (MSH-20)"),
-            _s("message_profile_identifier",       "Conformance profile that constrains the message (MSH-21.1)"),
+            _s("message_profile_identifier",       "Conformance profile entity identifier (MSH-21.1)"),
+            _s("message_profile_namespace_id",     "Namespace ID of the conformance profile (MSH-21.2)"),
+            _s("message_profile_universal_id",     "Universal ID (e.g. OID) of the conformance profile (MSH-21.3)"),
+            _s("message_profile_universal_id_type","Type of universal ID for the profile, e.g. ISO (MSH-21.4)"),
             _s("sending_responsible_org",          "Organization accountable for the sending application (MSH-22.1, v2.7+)"),
             _s("receiving_responsible_org",        "Organization accountable for the receiving application (MSH-23.1, v2.7+)"),
             _s("sending_network_address",          "Network address of the sending application (MSH-24.1, v2.7+)"),
@@ -992,6 +994,8 @@ def register_lakeflow_source(spark):
             _s("administrative_sex",            "Administrative gender code (PID-8): M=Male, F=Female, O=Other, U=Unknown"),
             _s("patient_alias",                 "Alias name(s) for the patient (PID-9, deprecated in v2.7)"),
             _s("race",                          "Race category code per HL7 table 0005 (PID-10.1)"),
+            _s("race_text",                     "Human-readable race description (PID-10.2)"),
+            _s("race_coding_system",            "Coding system for the race code, e.g. CDCREC, HL70005 (PID-10.3)"),
             _s("patient_address",               "Full patient address composite (PID-11), raw; use address_street / address_city etc."),
             _s("address_street",                "Street address line 1 (PID-11.1)"),
             _s("address_other_designation",     "Street address line 2, apartment, or suite (PID-11.2)"),
@@ -1011,6 +1015,8 @@ def register_lakeflow_source(spark):
             _s("drivers_license",               "Driver's license number and issuing state (PID-20, deprecated in v2.7)"),
             _s("mothers_identifier",            "Identifier for the patient's mother; used in neonatal records (PID-21.1)"),
             _s("ethnic_group",                  "Ethnic group code per HL7 table 0189 (PID-22.1)"),
+            _s("ethnic_group_text",             "Human-readable ethnic group description (PID-22.2)"),
+            _s("ethnic_group_coding_system",    "Coding system for the ethnic group code, e.g. CDCREC, HL70189 (PID-22.3)"),
             _s("birth_place",                   "Birthplace as free text (PID-23)"),
             _s("multiple_birth_indicator",      "Whether the patient is one of a multiple birth: Y or N (PID-24)"),
             _i("birth_order",                   "Birth sequence number for multiple-birth patients, e.g. 1, 2, 3 (PID-25)"),
@@ -1119,7 +1125,13 @@ def register_lakeflow_source(spark):
         + [
             _pk_i("set_id",                           "Sequence number of this OBR within the message; part of composite primary key (OBR-1)"),
             _s("placer_order_number",                 "Order number assigned by the ordering application (OBR-2.1)"),
+            _s("placer_order_namespace_id",           "Namespace ID of the placer application (OBR-2.2)"),
+            _s("placer_order_universal_id",           "Universal ID for the placer order (OBR-2.3)"),
+            _s("placer_order_universal_id_type",      "Type of universal ID for the placer order, e.g. ISO (OBR-2.4)"),
             _s("filler_order_number",                 "Order number assigned by the performing lab/radiology (OBR-3.1)"),
+            _s("filler_order_namespace_id",           "Namespace ID of the filler application (OBR-3.2)"),
+            _s("filler_order_universal_id",           "Universal ID for the filler order (OBR-3.3)"),
+            _s("filler_order_universal_id_type",      "Type of universal ID for the filler order, e.g. ISO (OBR-3.4)"),
             _s("universal_service_identifier",        "Ordered test composite (OBR-4), raw; use service_id / service_text"),
             _s("service_id",                          "Coded test identifier, e.g. LOINC or CPT code (OBR-4.1)"),
             _s("service_text",                        "Human-readable test name, e.g. Basic Metabolic Panel (OBR-4.2)"),
@@ -1193,7 +1205,13 @@ def register_lakeflow_source(spark):
             _s("observation_alt_text",            "Alternate observation name from the secondary coding system (OBX-3.5)"),
             _s("observation_alt_coding_system",   "Secondary coding system name (OBX-3.6)"),
             _s("observation_sub_id",              "Sub-identifier to group related OBX rows, e.g. for waveform or panel data (OBX-4)"),
-            _s("observation_value",               "The result value; interpret according to value_type (OBX-5), e.g. 138 for Sodium NM"),
+            _s("observation_value",               "The result value composite (OBX-5), raw; use observation_value_code / observation_value_text for coded types"),
+            _s("observation_value_code",          "Code/identifier from the observation value (OBX-5.1); meaningful when value_type is CWE, CE, or CNE"),
+            _s("observation_value_text",          "Human-readable text from the observation value (OBX-5.2); meaningful when value_type is CWE, CE, or CNE"),
+            _s("observation_value_coding_system", "Coding system for the observation value code (OBX-5.3), e.g. HL70136, SNOMED, LOINC"),
+            _s("observation_value_alt_code",      "Alternate code from a secondary coding system (OBX-5.4)"),
+            _s("observation_value_alt_text",      "Alternate text from the secondary coding system (OBX-5.5)"),
+            _s("observation_value_alt_coding_system", "Secondary coding system name (OBX-5.6)"),
             _s("units",                           "Units of measure composite (OBX-6), raw; use units_code / units_text"),
             _s("units_code",                      "Coded units, e.g. UCUM code mEq/L (OBX-6.1)"),
             _s("units_text",                      "Human-readable units description, e.g. milliequivalents per liter (OBX-6.2)"),
@@ -1983,112 +2001,6 @@ def register_lakeflow_source(spark):
 
 
     ########################################################
-    # src/databricks/labs/community_connector/sources/hl7/apply_comments.py
-    ########################################################
-
-    catalog = "my_catalog"       # UC catalog name
-    schema  = "my_schema"        # UC schema (database) name
-    table_prefix = ""            # Optional prefix prepended to each segment table name (e.g. "hl7_")
-
-    # COMMAND ----------
-
-    # MAGIC %md
-    # MAGIC ## Helper functions
-
-    # COMMAND ----------
-
-    def _esc(s: str) -> str:
-        """Escape single quotes for use inside SQL string literals."""
-        return s.replace("'", "\\'")
-
-
-    def _run(sql: str, dry_run: bool) -> None:
-        if dry_run:
-            print(f"  SQL: {sql}")
-        else:
-            spark.sql(sql)  # noqa: F821 — spark is always defined in Databricks notebooks
-
-
-    def apply_hl7_comments(
-        catalog: str,
-        schema: str,
-        table_prefix: str = "",
-        dry_run: bool = False,
-    ) -> None:
-        """Apply column comments and table descriptions to all HL7 streaming tables.
-
-        Args:
-            catalog:      Unity Catalog catalog name.
-            schema:       Schema (database) name.
-            table_prefix: Optional prefix prepended to each table name (default: "").
-            dry_run:      If True, print the SQL statements without executing them.
-        """
-        total_cols = 0
-        total_tables = 0
-
-        for seg in SEGMENT_TABLES:
-            table_name = f"{table_prefix}{seg}"
-            full_name = f"`{catalog}`.`{schema}`.`{table_name}`"
-
-            struct_type = SEGMENT_SCHEMAS.get(seg)
-            if struct_type is None:
-                print(f"[SKIP] No schema found for segment '{seg}'", file=sys.stderr)
-                continue
-
-            # --- table description ---
-            description = TABLE_DESCRIPTIONS.get(seg, "")
-            if description:
-                sql = f"COMMENT ON TABLE {full_name} IS '{_esc(description)}'"
-                _run(sql, dry_run)
-
-            # --- column comments ---
-            col_count = 0
-            for field in struct_type.fields:
-                comment = field.metadata.get("comment", "")
-                if not comment:
-                    continue
-                sql = (
-                    f"ALTER TABLE {full_name} "
-                    f"ALTER COLUMN `{field.name}` "
-                    f"COMMENT '{_esc(comment)}'"
-                )
-                _run(sql, dry_run)
-                col_count += 1
-
-            print(
-                f"[{'DRY RUN' if dry_run else 'OK'}] {full_name}: "
-                f"{'would apply' if dry_run else 'applied'} {col_count} column comment(s)"
-            )
-            total_cols += col_count
-            total_tables += 1
-
-        print(
-            f"\n{'[DRY RUN] Would apply' if dry_run else 'Applied'} comments to "
-            f"{total_cols} columns across {total_tables} tables."
-        )
-
-    # COMMAND ----------
-
-    # MAGIC %md
-    # MAGIC ## Dry Run — preview SQL without executing
-
-    # COMMAND ----------
-
-    apply_hl7_comments(catalog=catalog, schema=schema, table_prefix=table_prefix, dry_run=True)
-
-    # COMMAND ----------
-
-    # MAGIC %md
-    # MAGIC ## Apply — execute DDL to populate UC comments
-    # MAGIC
-    # MAGIC Uncomment and run the cell below when you are ready to apply.
-
-    # COMMAND ----------
-
-    # apply_hl7_comments(catalog=catalog, schema=schema, table_prefix=table_prefix, dry_run=False)
-
-
-    ########################################################
     # src/databricks/labs/community_connector/sources/hl7/hl7.py
     ########################################################
 
@@ -2218,6 +2130,9 @@ def register_lakeflow_source(spark):
             "principal_language": _v(seg.get_component(19, 1)),
             "alt_character_set_handling": _v(seg.get_field(20)),
             "message_profile_identifier": _v(seg.get_component(21, 1)),
+            "message_profile_namespace_id": _v(seg.get_component(21, 2)),
+            "message_profile_universal_id": _v(seg.get_component(21, 3)),
+            "message_profile_universal_id_type": _v(seg.get_component(21, 4)),
             "sending_responsible_org": _v(seg.get_component(22, 1)),
             "receiving_responsible_org": _v(seg.get_component(23, 1)),
             "sending_network_address": _v(seg.get_component(24, 1)),
@@ -2247,6 +2162,8 @@ def register_lakeflow_source(spark):
             "administrative_sex": _v(seg.get_field(8)),
             "patient_alias": _v(seg.get_first_repetition(9)),
             "race": _v(seg.get_rep_component(10, 1, 1)),
+            "race_text": _v(seg.get_rep_component(10, 1, 2)),
+            "race_coding_system": _v(seg.get_rep_component(10, 1, 3)),
             "patient_address": _v(seg.get_first_repetition(11)),
             "address_street": _v(seg.get_rep_component(11, 1, 1)),
             "address_other_designation": _v(seg.get_rep_component(11, 1, 2)),
@@ -2266,6 +2183,8 @@ def register_lakeflow_source(spark):
             "drivers_license": _v(seg.get_field(20)),
             "mothers_identifier": _v(seg.get_rep_component(21, 1, 1)),
             "ethnic_group": _v(seg.get_rep_component(22, 1, 1)),
+            "ethnic_group_text": _v(seg.get_rep_component(22, 1, 2)),
+            "ethnic_group_coding_system": _v(seg.get_rep_component(22, 1, 3)),
             "birth_place": _v(seg.get_field(23)),
             "multiple_birth_indicator": _v(seg.get_field(24)),
             "birth_order": _i(seg.get_field(25)),
@@ -2364,7 +2283,13 @@ def register_lakeflow_source(spark):
         return {
             "set_id": _i(seg.get_field(1)) or 1,
             "placer_order_number": _v(seg.get_component(2, 1)),
+            "placer_order_namespace_id": _v(seg.get_component(2, 2)),
+            "placer_order_universal_id": _v(seg.get_component(2, 3)),
+            "placer_order_universal_id_type": _v(seg.get_component(2, 4)),
             "filler_order_number": _v(seg.get_component(3, 1)),
+            "filler_order_namespace_id": _v(seg.get_component(3, 2)),
+            "filler_order_universal_id": _v(seg.get_component(3, 3)),
+            "filler_order_universal_id_type": _v(seg.get_component(3, 4)),
             "universal_service_identifier": _v(seg.get_field(4)),
             "service_id": _v(seg.get_component(4, 1)),
             "service_text": _v(seg.get_component(4, 2)),
@@ -2434,6 +2359,12 @@ def register_lakeflow_source(spark):
             "observation_alt_coding_system": _v(seg.get_component(3, 6)),
             "observation_sub_id": _v(seg.get_field(4)),
             "observation_value": _v(seg.get_first_repetition(5)),
+            "observation_value_code": _v(seg.get_rep_component(5, 1, 1)),
+            "observation_value_text": _v(seg.get_rep_component(5, 1, 2)),
+            "observation_value_coding_system": _v(seg.get_rep_component(5, 1, 3)),
+            "observation_value_alt_code": _v(seg.get_rep_component(5, 1, 4)),
+            "observation_value_alt_text": _v(seg.get_rep_component(5, 1, 5)),
+            "observation_value_alt_coding_system": _v(seg.get_rep_component(5, 1, 6)),
             "units": _v(seg.get_field(6)),
             "units_code": _v(seg.get_component(6, 1)),
             "units_text": _v(seg.get_component(6, 2)),
