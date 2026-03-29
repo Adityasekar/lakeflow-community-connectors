@@ -2,9 +2,12 @@
 # This file defines the specification for the connector including
 # connection parameters and allowlist options.
 #
-# This connector ingests HL7 v2 messages from a Google Cloud Healthcare API
-# HL7v2 store. Each HL7 segment type becomes its own Delta table, enabling
-# structured analytics over clinical data.
+# This connector ingests HL7 v2 messages and parses each segment type into
+# its own Delta table, enabling structured analytics over clinical data.
+#
+# Supported source modes (source_type):
+#   gcp   - Google Cloud Healthcare API HL7v2 store (default)
+#   delta - Bronze Delta table containing pre-loaded HL7 messages
 #
 # Supported tables (segment types):
 #   msh  - Message Header              evn  - Event Type
@@ -29,37 +32,83 @@
 display_name: HL7 v2
 connection:
   parameters:
+    - name: source_type
+      type: string
+      required: false
+      description: >
+        Source mode: "gcp" (default) reads from a Google Cloud Healthcare API
+        HL7v2 store; "delta" reads from a Bronze Delta table.
+
+    # -- Delta mode parameters -----------------------------------------------
+    - name: delta_table_name
+      type: string
+      required: false
+      description: >
+        Fully-qualified Delta table name (catalog.schema.table) containing
+        raw HL7 v2 messages. Required when source_type is "delta".
+        The table must have columns: data (STRING, raw HL7 pipe-delimited
+        text), sendTime (STRING or TIMESTAMP), and optionally name
+        (STRING, source identifier).
+
+    - name: databricks_host
+      type: string
+      required: false
+      description: >
+        Databricks workspace URL (e.g. https://my-workspace.cloud.databricks.com).
+        Required when source_type is "delta".  Used to query the Delta table
+        via the SQL Statement Execution API.
+
+    - name: databricks_token
+      type: string
+      required: false
+      description: >
+        Databricks personal access token (PAT) or service principal token.
+        Required when source_type is "delta".
+
+    - name: sql_warehouse_id
+      type: string
+      required: false
+      description: >
+        ID of a Databricks SQL warehouse to execute queries against the
+        Delta table. Required when source_type is "delta".
+
+    # -- GCP mode parameters (required when source_type is "gcp") ------------
     - name: project_id
       type: string
-      required: true
+      required: false
       description: >
         GCP project ID containing the Healthcare dataset.
+        Required when source_type is "gcp".
 
     - name: location
       type: string
-      required: true
+      required: false
       description: >
         GCP region where the Healthcare dataset resides (e.g. us-central1).
+        Required when source_type is "gcp".
 
     - name: dataset_id
       type: string
-      required: true
+      required: false
       description: >
         Google Cloud Healthcare API dataset ID.
+        Required when source_type is "gcp".
 
     - name: hl7v2_store_id
       type: string
-      required: true
+      required: false
       description: >
         HL7v2 store name within the Healthcare dataset.
+        Required when source_type is "gcp".
 
     - name: service_account_json
       type: string
-      required: true
+      required: false
       description: >
         Full JSON content of a GCP service account key file. The service
         account must have healthcare.hl7V2Messages.list and
         healthcare.hl7V2Messages.get permissions.
+        Required when source_type is "gcp".
 
 # ============================================================================
 # External Options Allowlist

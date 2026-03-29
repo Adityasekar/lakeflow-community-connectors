@@ -1,12 +1,19 @@
-"""HL7 v2 community connector — ingests HL7 messages from Google Cloud Healthcare API.
+"""HL7 v2 community connector — ingests HL7 messages from multiple source types.
 
-Messages are fetched from a GCP Healthcare API HL7v2 store via REST.  Each HL7
-segment type becomes its own table (msh, pid, pv1, obr, obx, …).
+Supported source modes (configured via ``source_type`` connection option):
+
+* ``gcp`` (default) — fetches messages from a Google Cloud Healthcare API
+  HL7v2 store via REST.
+* ``delta`` — reads pre-loaded messages from a Bronze Delta table.  The table
+  must contain columns ``data`` (raw HL7 pipe-delimited text), ``sendTime``
+  (RFC3339 string), and optionally ``name`` (source identifier).
+
+Each HL7 segment type becomes its own table (msh, pid, pv1, obr, obx, …).
 
 Schemas follow the HL7 v2.9 specification (the latest version, which is a
 superset of all prior versions).
 
-Incremental cursor: ``sendTime`` from the API (RFC3339 timestamp).
+Incremental cursor: ``sendTime`` (RFC3339 timestamp).
 The connector uses a sliding time-window strategy to bound each micro-batch.
 """
 
@@ -19,9 +26,6 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Iterator
 
-import requests
-from google.auth.transport import requests as google_auth_requests
-from google.oauth2 import service_account as google_sa
 from pyspark.sql.types import StructType
 
 from databricks.labs.community_connector.interface import LakeflowConnect
@@ -1195,16 +1199,24 @@ def _split_messages(text: str) -> list[str]:
 
 
 class HL7V2LakeflowConnect(LakeflowConnect):
-    """LakeflowConnect implementation for HL7 v2 messages from GCP Healthcare API.
+    """LakeflowConnect implementation for HL7 v2 messages.
 
-    Fetches messages from a Google Cloud Healthcare API HL7v2 store.
+    Supports two source modes controlled by the ``source_type`` option:
+
+    * ``gcp`` (default) — fetches from a Google Cloud Healthcare API HL7v2 store.
+    * ``delta`` — reads from a Bronze Delta table containing pre-loaded HL7
+      messages with columns ``data`` (raw text), ``sendTime``, and optionally ``name``.
+
     Each HL7 segment type is a separate table.  Incremental loading is driven
-    by the ``sendTime`` field from the API using a sliding time-window.
+    by ``sendTime`` using a sliding time-window.
 
-    Required connection options (from connector_spec.yaml):
+    GCP mode connection options:
         project_id, location, dataset_id, hl7v2_store_id, service_account_json
 
-    Table options:
+    Delta mode connection options:
+        delta_table_name (fully-qualified catalog.schema.table)
+
+    Table options (both modes):
         segment_type (str): Override segment type for custom/Z-segments.
         max_records_per_batch (str): Best-effort cap on records per micro-batch
             (default 10000).  The sliding window may yield more.
@@ -1214,11 +1226,32 @@ class HL7V2LakeflowConnect(LakeflowConnect):
             prior offset exists and auto-discovery is not possible.
     """
 
+    _GCP_REQUIRED_KEYS = ("project_id", "location", "dataset_id", "hl7v2_store_id", "service_account_json")
+
     def __init__(self, options: dict[str, str]) -> None:
         super().__init__(options)
-        for key in ("project_id", "location", "dataset_id", "hl7v2_store_id", "service_account_json"):
+        self._source_type = options.get("source_type", "gcp").lower()
+        self._init_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self._oldest_send_time: str | None = None
+
+        if self._source_type == "delta":
+            self._init_delta(options)
+        elif self._source_type == "gcp":
+            self._init_gcp(options)
+        else:
+            raise ValueError(
+                f"Unsupported source_type '{self._source_type}'. "
+                "Must be 'gcp' or 'delta'."
+            )
+
+    def _init_gcp(self, options: dict[str, str]) -> None:
+        import requests
+        from google.auth.transport import requests as google_auth_requests
+        from google.oauth2 import service_account as google_sa
+
+        for key in self._GCP_REQUIRED_KEYS:
             if key not in options:
-                raise ValueError(f"'{key}' is required in connector options.")
+                raise ValueError(f"'{key}' is required in connector options for source_type 'gcp'.")
 
         self._base_url = (
             f"https://healthcare.googleapis.com/v1"
@@ -1241,11 +1274,21 @@ class HL7V2LakeflowConnect(LakeflowConnect):
         )
         self._google_request = google_auth_requests.Request()
         self._session = requests.Session()
-
         self._creds.refresh(self._google_request)
 
-        self._init_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        self._oldest_send_time: str | None = None
+    _DELTA_REQUIRED_KEYS = ("delta_table_name", "databricks_host", "databricks_token", "sql_warehouse_id")
+
+    def _init_delta(self, options: dict[str, str]) -> None:
+        for key in self._DELTA_REQUIRED_KEYS:
+            if key not in options:
+                raise ValueError(f"'{key}' is required in connector options for source_type 'delta'.")
+        self._delta_table = options["delta_table_name"]
+        self._dbx_host = options["databricks_host"]
+        self._dbx_token = options["databricks_token"]
+        self._sql_warehouse_id = options["sql_warehouse_id"]
+        self._delta_cache: list[dict] | None = None
+        self._delta_preload_error: str | None = None
+        self._preload_delta()
 
     # ------------------------------------------------------------------
     # HTTP helpers
@@ -1303,12 +1346,15 @@ class HL7V2LakeflowConnect(LakeflowConnect):
     def read_table(
         self, table_name: str, start_offset: dict, table_options: dict[str, str]
     ) -> tuple[Iterator[dict], dict]:
-        """Sliding time-window incremental read from the GCP Healthcare API.
+        """Sliding time-window incremental read.
 
         Fetches all messages whose ``sendTime`` falls in
         ``(since, since + window_seconds]``, parses them, and returns rows
         for the requested segment type.  The cursor advances to the window
         end regardless of whether data was found, ensuring forward progress.
+
+        Works identically for both GCP and Delta source modes — only the
+        fetch method differs.
         """
         self._validate_table(table_name, table_options)
         segment_type = table_options.get("segment_type", table_name).upper()
@@ -1333,9 +1379,14 @@ class HL7V2LakeflowConnect(LakeflowConnect):
             self._init_ts,
         )
 
-        api_messages = self._fetch_messages_in_window(since, window_end)
+        if self._source_type == "delta":
+            api_messages = self._fetch_messages_from_delta(since, window_end)
+        else:
+            api_messages = self._fetch_messages_in_window(since, window_end)
 
-        records = self._parse_api_messages(api_messages, segment_type)
+        records = self._parse_api_messages(
+            api_messages, segment_type, decode_base64=(self._source_type != "delta")
+        )
 
         end_offset = {"cursor": window_end}
         if start_offset is not None and start_offset == end_offset:
@@ -1363,6 +1414,11 @@ class HL7V2LakeflowConnect(LakeflowConnect):
         """
         if self._oldest_send_time is not None:
             return self._oldest_send_time
+
+        if self._source_type == "delta":
+            self._oldest_send_time = self._peek_oldest_send_time_delta()
+            return self._oldest_send_time
+
         body = self._api_get({
             "view": "FULL",
             "pageSize": "1",
@@ -1404,8 +1460,90 @@ class HL7V2LakeflowConnect(LakeflowConnect):
 
         return messages
 
-    def _parse_api_messages(self, api_messages: list[dict], segment_type: str) -> list[dict]:
-        """Decode, parse, and extract rows from API message payloads."""
+    def _preload_delta(self) -> None:
+        """Pre-load Delta table data via the Databricks SQL Statement Execution API.
+
+        SparkSession is unavailable in both ``DataSource.__init__`` and the
+        streaming reader subprocess, so we use the Databricks SDK with explicit
+        credentials (``databricks_host``, ``databricks_token``) provided as
+        connection parameters — the same pattern used by the GCP mode with
+        ``service_account_json``.
+        """
+        from databricks.sdk import WorkspaceClient
+
+        try:
+            w = WorkspaceClient(host=self._dbx_host, token=self._dbx_token)
+
+            stmt = (
+                f"SELECT data, "
+                f"date_format(sendTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") AS sendTime, "
+                f"name "
+                f"FROM {self._delta_table} "
+                f"ORDER BY sendTime"
+            )
+            result = w.statement_execution.execute_statement(
+                warehouse_id=self._sql_warehouse_id,
+                statement=stmt,
+                wait_timeout="50s",
+            )
+
+            while result.status and result.status.state.value in ("PENDING", "RUNNING"):
+                time.sleep(1)
+                result = w.statement_execution.get_statement(result.statement_id)
+
+            self._delta_cache = []
+            for row in (result.result.data_array or []):
+                self._delta_cache.append({
+                    "data": row[0] or "",
+                    "sendTime": row[1] or "",
+                    "name": row[2] if len(row) > 2 else "",
+                })
+        except Exception as exc:
+            self._delta_preload_error = f"{type(exc).__name__}: {exc}"
+            return
+
+    def _fetch_messages_from_delta(self, since: str, until: str) -> list[dict]:
+        """Fetch messages from the pre-loaded Delta cache with sendTime in (since, until].
+
+        Returns a list of dicts with the same shape as the GCP API response
+        (keys: ``data``, ``sendTime``, ``name``) so that ``_parse_api_messages``
+        works unchanged.
+        """
+        if self._delta_cache is None:
+            raise RuntimeError(
+                f"Delta cache was not populated. "
+                f"Preload error: {self._delta_preload_error}. "
+                f"Table: {self._delta_table}"
+            )
+
+        return [
+            row for row in self._delta_cache
+            if since < str(row.get("sendTime", "")) <= until
+        ]
+
+    def _peek_oldest_send_time_delta(self) -> str | None:
+        """Return the earliest sendTime from the pre-loaded Delta cache."""
+        if not self._delta_cache:
+            return None
+
+        first_ts = str(self._delta_cache[0].get("sendTime", ""))
+        if not first_ts:
+            return None
+
+        dt = datetime.fromisoformat(first_ts.replace("Z", "+00:00"))
+        dt -= timedelta(seconds=1)
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _parse_api_messages(
+        self, api_messages: list[dict], segment_type: str, *, decode_base64: bool = True
+    ) -> list[dict]:
+        """Decode, parse, and extract rows from message payloads.
+
+        Args:
+            decode_base64: When True (GCP mode), the ``data`` field is
+                base64-decoded.  When False (Delta mode), ``data`` is
+                treated as raw HL7 text.
+        """
         records: list[dict] = []
 
         for msg_data in api_messages:
@@ -1413,7 +1551,10 @@ class HL7V2LakeflowConnect(LakeflowConnect):
             raw_data = msg_data.get("data", "")
             if not raw_data:
                 continue
-            raw_hl7 = base64.b64decode(raw_data).decode("utf-8", errors="replace")
+            if decode_base64:
+                raw_hl7 = base64.b64decode(raw_data).decode("utf-8", errors="replace")
+            else:
+                raw_hl7 = raw_data
             source_name = msg_data.get("name", "")
 
             for msg_text in _split_messages(raw_hl7):

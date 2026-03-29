@@ -2,9 +2,20 @@
 
 This documentation provides setup instructions and reference information for the HL7 v2 source connector.
 
-The Lakeflow HL7 v2 Connector ingests HL7 v2 messages from a **Google Cloud Healthcare API HL7v2 store** and loads each segment type into its own Delta table. This enables structured analytics over clinical data that was originally transmitted in the HL7 v2 pipe-delimited format. The connector supports incremental append-only ingestion, automatically tracking new messages by their API send time.
+The Lakeflow HL7 v2 Connector parses HL7 v2 pipe-delimited messages and loads each segment type into its own Delta table, enabling structured analytics over clinical data. The connector supports incremental append-only ingestion, automatically tracking new messages by their send time.
+
+## Supported Source Modes
+
+The connector supports two source modes, controlled by the `source_type` connection parameter. In both modes, the same HL7 v2 parsing pipeline is used -- every extractor, schema, and segment table works identically regardless of where the raw messages originate.
+
+| Mode | `source_type` value | Description |
+|---|---|---|
+| **GCP Healthcare API** | `gcp` (default) | Fetches HL7 v2 messages from a Google Cloud Healthcare API HL7v2 store via REST |
+| **Delta Table** | `delta` | Reads pre-loaded HL7 v2 messages from a Bronze Delta table in Databricks |
 
 ## Prerequisites
+
+### GCP Mode
 
 - A **Google Cloud Platform** project with the **Cloud Healthcare API** enabled
 - An **HL7v2 store** within a Healthcare API dataset, containing HL7 v2 messages
@@ -13,29 +24,82 @@ The Lakeflow HL7 v2 Connector ingests HL7 v2 messages from a **Google Cloud Heal
   - `healthcare.hl7V2Messages.get`
 - A JSON key file for the service account
 
+### Delta Mode
+
+- A **Delta table** in Unity Catalog containing raw HL7 v2 messages (see [Delta Table Schema Requirements](#delta-table-schema-requirements) below)
+- The table is typically populated by landing HL7 files onto **Databricks Volumes** and loading them into a Bronze table
+
 ## Setup
 
-### Required Connection Parameters
+### Connection Parameters by Source Mode
 
-To configure the connector, provide the following parameters in your connector options:
+The `source_type` parameter determines which set of connection parameters is required. If `source_type` is omitted, it defaults to `gcp`.
+
+#### GCP Mode Connection Parameters
 
 | Parameter | Type | Required | Description | Example |
 |---|---|---|---|---|
+| `source_type` | string | No | Set to `gcp` or omit entirely | `gcp` |
 | `project_id` | string | Yes | GCP project ID containing the Healthcare dataset | `my-gcp-project` |
 | `location` | string | Yes | GCP region where the Healthcare dataset resides | `us-central1` |
 | `dataset_id` | string | Yes | Google Cloud Healthcare API dataset ID | `My_Clinical_Dataset` |
 | `hl7v2_store_id` | string | Yes | HL7v2 store name within the Healthcare dataset | `ehr_messages` |
 | `service_account_json` | string | Yes | Full JSON content of a GCP service account key file | `{"type": "service_account", ...}` |
 
+#### Delta Mode Connection Parameters
+
+| Parameter | Type | Required | Description | Example |
+|---|---|---|---|---|
+| `source_type` | string | Yes | Must be set to `delta` | `delta` |
+| `delta_table_name` | string | Yes | Fully-qualified Delta table name (three-level namespace) | `my_catalog.bronze.hl7_raw` |
+| `databricks_host` | string | Yes | Databricks workspace URL | `https://my-workspace.cloud.databricks.com` |
+| `databricks_token` | string | Yes | Databricks personal access token (PAT) or service principal token | `dapi...` |
+| `sql_warehouse_id` | string | Yes | ID of a SQL warehouse used to query the Delta table | `01370556fad60fda` |
+
+> **Why are Databricks credentials needed?** The Lakeflow Connect pipeline framework uses the Spark Python Data Source API, which runs connector code in a subprocess where SparkSession is unavailable. To read the Delta table, the connector queries it via the Databricks SQL Statement Execution REST API, which requires explicit workspace credentials -- the same pattern used by the GCP mode with its `service_account_json`.
+
+### Delta Table Schema Requirements
+
+A typical HL7 v2 message is just the raw pipe-delimited text (e.g., `MSH|^~\&|SendingApp|...`). The connector needs that message body plus two pieces of metadata for incremental ingestion and traceability. Your Bronze Delta table must have the following columns:
+
+| Column | Type | Required | Description |
+|---|---|---|---|
+| `data` | STRING | **Yes** | The raw HL7 v2 message text, stored as-is (pipe-delimited, e.g., `MSH\|^~\\&\|SendingApp\|...`). No encoding required. |
+| `sendTime` | STRING or TIMESTAMP | **Yes** | A timestamp (e.g., `2024-01-15T10:30:00Z`). This is used as the **incremental cursor** -- the connector uses a sliding time window over this column to fetch new messages in each micro-batch. Both STRING (RFC 3339) and TIMESTAMP types are supported. Typically this represents when the message was received, sent, or landed in your system. |
+| `name` | STRING | No | A source identifier for traceability (e.g., the original file path from Volumes, a message ID, or any label). This value is stored in the `source_file` metadata column of every output table. If omitted, `source_file` will be empty. |
+
+**Why the extra columns beyond the message itself?**
+
+- **`sendTime`**: Without a timestamp column, the connector cannot track which messages have already been processed. This column drives incremental ingestion -- each run reads only messages with `sendTime` after the last checkpoint. The Lakeflow pipeline framework persists this cursor between runs automatically.
+- **`name`**: Optional but recommended. When debugging or auditing, it lets you trace a parsed row back to the original source file or system.
+
+**Example: Creating the Bronze table from Volume files**
+
+If your HL7 v2 messages are landing as text files on a Databricks Volume, you can create the required Bronze table like this. Each file must become **one row** containing the complete multi-segment message, so use `format => 'binaryFile'` (not `'text'`, which splits into one row per line):
+
+```sql
+CREATE TABLE my_catalog.bronze.hl7_raw AS
+SELECT
+  string(content)      AS data,
+  modificationTime     AS sendTime,
+  path                 AS name
+FROM read_files(
+  '/Volumes/my_catalog/my_schema/hl7_volume/',
+  format => 'binaryFile'
+);
+```
+
+For incremental loads into the Bronze table, consider using Auto Loader or a streaming table to continuously pick up new files from the Volume and append them.
+
 ### Table-Level Options
 
-The following options can be set per table via `table_configuration`:
+The following options can be set per table via `table_configuration`. These apply to **both** source modes:
 
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `segment_type` | string | *(table name)* | Override the HL7 segment type to extract. Use this to ingest custom Z-segments (e.g., `ZPD`) through any table name. |
 | `window_seconds` | string | `86400` | Duration in seconds of the sliding time window used for incremental reads. Smaller values produce smaller, faster batches. |
-| `start_timestamp` | string | *(auto-discovered)* | RFC 3339 timestamp to start reading from when no prior offset exists (e.g., `2024-01-01T00:00:00Z`). If omitted, the connector auto-discovers the oldest message in the store. |
+| `start_timestamp` | string | *(auto-discovered)* | RFC 3339 timestamp to start reading from when no prior offset exists (e.g., `2024-01-01T00:00:00Z`). If omitted, the connector auto-discovers the oldest message. |
 
 To use table-level options, include them in the `externalOptionsAllowList` connection parameter:
 
@@ -43,7 +107,29 @@ To use table-level options, include them in the `externalOptionsAllowList` conne
 segment_type,window_seconds,start_timestamp
 ```
 
-### Obtaining the Connection Parameters
+### Obtaining Delta Mode Connection Parameters
+
+#### Workspace URL (`databricks_host`)
+
+This is your Databricks workspace URL. You can find it in your browser address bar when logged in (e.g., `https://my-workspace.cloud.databricks.com`). It is also shown in **Settings > Workspace details**.
+
+#### Personal Access Token (`databricks_token`)
+
+1. In Databricks, go to **Settings > Developer > Access tokens**
+2. Click **Generate new token**, give it a description (e.g., `hl7-delta-connector`), and set an appropriate lifetime
+3. Copy the generated token (starts with `dapi`)
+
+Alternatively, use a **service principal** token for production deployments. The token must have `SELECT` access on the Delta table specified in `delta_table_name`.
+
+#### SQL Warehouse ID (`sql_warehouse_id`)
+
+1. In Databricks, go to **SQL Warehouses**
+2. Click on the warehouse you want to use (any warehouse that can access the Delta table)
+3. The warehouse ID is shown in the **Connection details** tab, or in the URL: `.../sql/warehouses/<warehouse_id>`
+
+> **Tip**: For cost efficiency, use a serverless SQL warehouse — it scales to zero when idle and starts up quickly when the pipeline triggers a query.
+
+### Obtaining GCP Connection Parameters
 
 #### Project, Location, Dataset, and Store IDs
 
@@ -136,7 +222,7 @@ Arbitrary Z-segments (site-specific custom segments) can be ingested by setting 
 
 All tables use **append-only** incremental ingestion:
 
-- New messages are tracked by the `sendTime` timestamp from the Google Cloud Healthcare API (stored as the `send_time` column).
+- New messages are tracked by the `sendTime` timestamp (stored as the `send_time` column). In GCP mode this comes from the Healthcare API; in Delta mode it comes from the `sendTime` column of your Bronze table.
 - The connector uses a **sliding time window** to bound each micro-batch, advancing the cursor forward with each run.
 - Messages already processed are never re-fetched. No change feeds, upserts, or deletes are produced.
 
@@ -149,8 +235,8 @@ Every table includes the following columns for traceability and cross-table join
 | `message_id` | Unique message control ID from MSH-10 — the primary join key across all tables |
 | `message_timestamp` | Message date/time string from MSH-7 (e.g., `20240115120000`) |
 | `hl7_version` | HL7 version (e.g., `2.5.1`) from MSH-12 |
-| `source_file` | API resource name of the source HL7 message for traceability |
-| `send_time` | Message send time from the GCP Healthcare API (RFC 3339); used as the incremental cursor |
+| `source_file` | Source identifier for traceability — the GCP API resource name (GCP mode) or the `name` column value (Delta mode) |
+| `send_time` | RFC 3339 timestamp used as the incremental cursor — from the GCP API `sendTime` (GCP mode) or the `sendTime` column (Delta mode) |
 | `raw_segment` | The original unparsed HL7 segment text |
 
 
@@ -253,19 +339,29 @@ Follow the Lakeflow Community Connector UI, which will guide you through setting
 #### Best Practices
 
 - **Start Small**: Begin by syncing a few key segment types (e.g., `msh`, `pid`, `pv1`, `obx`) before adding the full set.
-- **Use Incremental Sync**: The connector automatically tracks progress via the `sendTime` cursor, minimizing redundant API calls.
-- **Tune the Window Size**: For high-volume stores, reduce `window_seconds` (e.g., `3600` for 1-hour windows) to keep each micro-batch manageable. For low-volume stores, the default of `86400` (1 day) works well.
-- **Monitor GCP Quotas**: The Google Cloud Healthcare API has per-project quota limits. Check the [GCP quota console](https://console.cloud.google.com/iam-admin/quotas) and adjust pipeline frequency accordingly.
+- **Use Incremental Sync**: The connector automatically tracks progress via the `sendTime` cursor, minimizing redundant reads.
+- **Tune the Window Size**: For high-volume sources, reduce `window_seconds` (e.g., `3600` for 1-hour windows) to keep each micro-batch manageable. For low-volume sources, the default of `86400` (1 day) works well.
 - **Join Across Tables**: Use the `message_id` column to join data across segment tables (e.g., join `pid` with `obx` to link patient demographics to lab results).
+- **Delta Mode -- Keep the Bronze Table Updated**: Use Auto Loader or a streaming table to continuously land new HL7 files from your Volume into the Bronze Delta table, so the connector always has fresh data to parse.
 
 #### Troubleshooting
 
-**Common Issues:**
+**Common Issues (both modes):**
+
+- **Missing Segments**: Not all HL7 messages contain all segment types. ADT messages typically include MSH, EVN, PID, PV1 but not OBR/OBX. ORU messages include MSH, PID, ORC, OBR, OBX but may omit EVN, AL1, DG1.
+- **Slow Ingestion**: Reduce `window_seconds` to process smaller time ranges per batch.
+
+**GCP Mode Issues:**
 
 - **Authentication Errors**: Verify that `service_account_json` contains the complete JSON key file contents and that the service account has the required Healthcare API permissions.
 - **No Data Returned**: Check that the HL7v2 store contains messages and that the `location`, `dataset_id`, and `hl7v2_store_id` are correct. Use the GCP Console to verify.
-- **Slow Ingestion**: Reduce `window_seconds` to process smaller time ranges per batch. Ensure the HL7v2 store is in a region with low latency to your Databricks workspace.
-- **Missing Segments**: Not all HL7 messages contain all segment types. ADT messages typically include MSH, EVN, PID, PV1 but not OBR/OBX. ORU messages include MSH, PID, ORC, OBR, OBX but may omit EVN, AL1, DG1.
+- **GCP Quotas**: The Google Cloud Healthcare API has per-project quota limits. Check the [GCP quota console](https://console.cloud.google.com/iam-admin/quotas) and adjust pipeline frequency accordingly.
+
+**Delta Mode Issues:**
+
+- **Table Not Found**: Verify that `delta_table_name` is a fully-qualified three-level name (e.g., `my_catalog.bronze.hl7_raw`) and that the pipeline's service principal has `SELECT` permissions on the table.
+- **No Data Returned**: Confirm the table has rows with `sendTime` values and that the `data` column contains valid HL7 message text. You can verify with: `SELECT sendTime, substring(data, 1, 50) FROM my_catalog.bronze.hl7_raw LIMIT 5` -- the `data` column should start with `MSH|`.
+- **Parse Errors**: Ensure the `data` column contains the raw pipe-delimited HL7 text, not base64-encoded data. If your data is base64-encoded, decode it: `UPDATE my_table SET data = cast(unbase64(data) as STRING)`.
 
 
 ## References
@@ -274,3 +370,5 @@ Follow the Lakeflow Community Connector UI, which will guide you through setting
 - [Healthcare API — List Messages](https://cloud.google.com/healthcare-api/docs/reference/rest/v1/projects.locations.datasets.hl7V2Stores.messages/list)
 - [Healthcare API — Authentication](https://cloud.google.com/healthcare-api/docs/how-tos/hl7v2-messages)
 - [HL7 Version 2.9 Specification](https://www.hl7.eu/HL7v2x/v29/hl7v29.htm)
+- [Databricks Volumes](https://docs.databricks.com/en/connect/unity-catalog/volumes.html)
+- [Auto Loader (read_files)](https://docs.databricks.com/en/ingestion/auto-loader/index.html)

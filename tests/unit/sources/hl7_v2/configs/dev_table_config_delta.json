@@ -1,0 +1,17 @@
+{
+  "msh": {
+    "window_seconds": "60"
+  },
+  "pid": {
+    "window_seconds": "60"
+  },
+  "pv1": {
+    "window_seconds": "60"
+  },
+  "obx": {
+    "window_seconds": "60"
+  },
+  "obr": {
+    "window_seconds": "60"
+  }
+}
