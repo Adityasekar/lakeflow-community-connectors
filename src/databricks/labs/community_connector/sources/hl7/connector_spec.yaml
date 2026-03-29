@@ -2,9 +2,9 @@
 # This file defines the specification for the connector including
 # connection parameters and allowlist options.
 #
-# This connector ingests HL7 v2 message files (.hl7 / .txt) from a
-# Databricks Unity Catalog Volume path. Each HL7 segment type becomes
-# its own Delta table, enabling structured analytics over clinical data.
+# This connector ingests HL7 v2 messages from a Google Cloud Healthcare API
+# HL7v2 store. Each HL7 segment type becomes its own Delta table, enabling
+# structured analytics over clinical data.
 #
 # Supported tables (segment types):
 #   msh  - Message Header              evn  - Event Type
@@ -21,8 +21,6 @@
 #   txa  - Transcription Document
 #
 # Custom / Z-segments are supported via the segment_type table option.
-# The connector uses file modification timestamp (mtime) as an incremental
-# cursor and processes files in batches to manage memory and throughput.
 
 # ============================================================================
 # Connection Parameters
@@ -31,29 +29,41 @@
 display_name: HL7 v2
 connection:
   parameters:
-    - name: volume_path
+    - name: project_id
       type: string
       required: true
       description: >
-        Path to the Unity Catalog Volume directory containing HL7 v2 message
-        files. Must be accessible to the pipeline compute.
-        Example: /Volumes/healthcare/raw/hl7_feed/
+        GCP project ID containing the Healthcare dataset.
 
-    - name: file_pattern
+    - name: location
       type: string
-      required: false
+      required: true
       description: >
-        Glob pattern used to match HL7 files within the volume_path.
-        Defaults to *.hl7. Use **/*.hl7 for recursive directory search,
-        or *.txt if files use the .txt extension.
+        GCP region where the Healthcare dataset resides (e.g. us-central1).
+
+    - name: dataset_id
+      type: string
+      required: true
+      description: >
+        Google Cloud Healthcare API dataset ID.
+
+    - name: hl7v2_store_id
+      type: string
+      required: true
+      description: >
+        HL7v2 store name within the Healthcare dataset.
+
+    - name: service_account_json
+      type: string
+      required: true
+      description: >
+        Full JSON content of a GCP service account key file. The service
+        account must have healthcare.hl7V2Messages.list and
+        healthcare.hl7V2Messages.get permissions.
 
 # ============================================================================
 # External Options Allowlist
 # These table-specific options can be passed per-table in the pipeline
 # configuration via externalOptionsAllowList on the UC connection.
-# Options include:
-#   - segment_type: Override the segment type for the table (for custom/Z-segments)
-#   - max_records_per_batch: Maximum number of records to read in a micro-batch
-#                             (applies per table; connector-level default is 10,000)
 # ============================================================================
-external_options_allowlist: "segment_type,max_records_per_batch"
+external_options_allowlist: "segment_type,window_seconds,start_timestamp"

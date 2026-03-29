@@ -14,44 +14,48 @@ Every table includes four common metadata columns:
     source_file       — basename of the source .hl7 file
 """
 
-from pyspark.sql.types import LongType, StringType, StructField, StructType, TimestampType
+from pyspark.sql.types import LongType, StringType, StructField, StructType
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def _s(name: str, comment: str = "") -> StructField:
-    """Nullable StringType field with an optional Unity Catalog column comment."""
-    meta = {"comment": comment} if comment else {}
-    return StructField(name, StringType(), nullable=True, metadata=meta)
+    """Nullable StringType field.
+
+    The *comment* parameter is retained for documentation and for the
+    ``apply_comments.py`` notebook but is NOT stored in StructField metadata.
+    Arrow metadata mismatches between the JVM and Python data-source workers
+    cause ARROW_TYPE_MISMATCH errors when StructField metadata is present.
+    """
+    return StructField(name, StringType(), nullable=True)
 
 
 def _i(name: str, comment: str = "") -> StructField:
-    """Nullable LongType field with an optional Unity Catalog column comment."""
-    meta = {"comment": comment} if comment else {}
-    return StructField(name, LongType(), nullable=True, metadata=meta)
+    """Nullable LongType field (see ``_s`` for metadata rationale)."""
+    return StructField(name, LongType(), nullable=True)
 
 
 def _ts(name: str, comment: str = "") -> StructField:
-    """Nullable TimestampType field with an optional Unity Catalog column comment."""
-    meta = {"comment": comment} if comment else {}
-    return StructField(name, TimestampType(), nullable=True, metadata=meta)
+    """Nullable StringType field for ISO-8601 timestamps.
+
+    Uses StringType to avoid Arrow timestamp-timezone mismatches.
+    Downstream consumers can CAST to TIMESTAMP in SQL when needed.
+    """
+    return StructField(name, StringType(), nullable=True)
 
 
 def _pk_s(name: str, comment: str = "") -> StructField:
     """NOT NULL StringType field used as (part of) a primary key.
 
-    NOT NULL is required for Unity Catalog PRIMARY KEY constraints and makes the
-    column visible as a key column in the Catalog Explorer UI.
+    NOT NULL is required for Unity Catalog PRIMARY KEY constraints.
     """
-    meta = {"comment": comment} if comment else {}
-    return StructField(name, StringType(), nullable=False, metadata=meta)
+    return StructField(name, StringType(), nullable=False)
 
 
 def _pk_i(name: str, comment: str = "") -> StructField:
     """NOT NULL LongType field used as (part of) a composite primary key."""
-    meta = {"comment": comment} if comment else {}
-    return StructField(name, LongType(), nullable=False, metadata=meta)
+    return StructField(name, LongType(), nullable=False)
 
 
 # Fields present in every segment table.
@@ -59,7 +63,8 @@ _METADATA_FIELDS: list[StructField] = [
     _pk_s("message_id",     "Unique message identifier (MSH-10); primary join key across all segment tables"),
     _s("message_timestamp", "Message creation date/time (MSH-7) in HL7 DTM format, e.g. 20240101120000"),
     _s("hl7_version",       "HL7 version string (MSH-12), e.g. 2.5.1"),
-    _s("source_file",       "Basename of the source .hl7 file for traceability"),
+    _s("source_file",       "API resource name of the source HL7 message for traceability"),
+    _s("send_time",         "Message send time from the GCP Healthcare API in RFC3339 format; used as incremental cursor"),
     _s("raw_segment",       "Raw pipe-delimited text of this HL7 segment for lossless recovery and debugging"),
 ]
 

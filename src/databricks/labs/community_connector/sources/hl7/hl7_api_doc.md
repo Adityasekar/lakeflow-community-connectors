@@ -2,14 +2,38 @@
 
 ## **Authorization**
 
-No credentials are required. The HL7 v2 connector reads message files directly from a **Databricks Unity Catalog Volume**. File access is managed natively by Databricks — no API keys, OAuth tokens, or external authentication.
+The HL7 v2 connector reads messages from the **Google Cloud Healthcare API** (HL7v2 store) using a **Google Cloud service account**. Authentication uses OAuth2 Bearer tokens obtained from a service account JSON key.
+
+**Auth Method**: Service Account JSON Key → `google-auth` library → Bearer token
+
+**Python (google-auth):**
+```python
+import google.oauth2.service_account
+import google.auth.transport.requests
+
+info = json.loads(service_account_json)  # full JSON string of SA key
+creds = google.oauth2.service_account.Credentials.from_service_account_info(
+    info, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+)
+creds.refresh(google.auth.transport.requests.Request())
+# Use creds.token as Bearer token in Authorization header
+```
+
+**Required OAuth Scope**: `https://www.googleapis.com/auth/cloud-healthcare` or `https://www.googleapis.com/auth/cloud-platform`
+
+**Required IAM Permissions**:
+- `healthcare.hl7V2Messages.list`
+- `healthcare.hl7V2Messages.get`
 
 **Connection Parameters:**
 
 | Parameter | Required | Description |
 |---|---|---|
-| `volume_path` | Yes | Path to the Volume directory containing HL7 files, e.g. `/Volumes/healthcare/raw/hl7_feed/` |
-| `file_pattern` | No | Glob pattern for file matching (default: `*.hl7`). Use `**/*.hl7` for recursive search. |
+| `project_id` | Yes | GCP project ID containing the Healthcare dataset |
+| `location` | Yes | GCP region, e.g. `us-central1` |
+| `dataset_id` | Yes | Healthcare API dataset ID |
+| `hl7v2_store_id` | Yes | HL7v2 store name within the dataset |
+| `service_account_json` | Yes | Full JSON content of a GCP service account key file |
 
 ---
 
@@ -950,44 +974,105 @@ Primary keys are **static** — not discoverable via API.
 
 All tables use **`append`** ingestion:
 
-- HL7 message files are immutable once written to the volume.
-- The connector tracks new/modified files by **file modification timestamp** (epoch seconds).
-- Files already processed are never re-read.
-- No change feeds, upserts, or deletes — new files always produce new rows.
+- HL7 messages are fetched from the Google Cloud Healthcare API HL7v2 store.
+- The connector tracks new messages by **`sendTime`** (RFC3339 timestamp from the API).
+- Messages already processed are never re-fetched.
+- No change feeds, upserts, or deletes — new messages always produce new rows.
 
 | Table | Ingestion Type | Cursor | Notes |
 |---|---|---|---|
-| `msh` | `append` | File modification time | One row per message |
-| `evn` | `append` | File modification time | One row per message with EVN |
-| `pid` | `append` | File modification time | One row per message with PID |
-| `pd1` | `append` | File modification time | One row per message with PD1 |
-| `pv1` | `append` | File modification time | One row per message with PV1 |
-| `pv2` | `append` | File modification time | One row per message with PV2 |
-| `nk1` | `append` | File modification time | Multiple rows per message possible |
-| `mrg` | `append` | File modification time | One row per merge message |
-| `al1` | `append` | File modification time | Multiple rows per message possible |
-| `iam` | `append` | File modification time | Multiple rows per message possible |
-| `dg1` | `append` | File modification time | Multiple rows per message possible |
-| `pr1` | `append` | File modification time | Multiple rows per message possible |
-| `orc` | `append` | File modification time | Multiple rows per message possible |
-| `obr` | `append` | File modification time | Multiple rows per message possible |
-| `obx` | `append` | File modification time | 8–50 rows per lab message typical |
-| `nte` | `append` | File modification time | Multiple rows per message possible |
-| `spm` | `append` | File modification time | Multiple rows per message possible |
-| `in1` | `append` | File modification time | Multiple rows per message possible |
-| `gt1` | `append` | File modification time | Multiple rows per message possible |
-| `ft1` | `append` | File modification time | Multiple rows per message possible |
-| `rxa` | `append` | File modification time | Multiple rows per message possible |
-| `sch` | `append` | File modification time | One row per scheduling message |
-| `txa` | `append` | File modification time | One row per document message |
+| `msh` | `append` | `sendTime` | One row per message |
+| `evn` | `append` | `sendTime` | One row per message with EVN |
+| `pid` | `append` | `sendTime` | One row per message with PID |
+| `pd1` | `append` | `sendTime` | One row per message with PD1 |
+| `pv1` | `append` | `sendTime` | One row per message with PV1 |
+| `pv2` | `append` | `sendTime` | One row per message with PV2 |
+| `nk1` | `append` | `sendTime` | Multiple rows per message possible |
+| `mrg` | `append` | `sendTime` | One row per merge message |
+| `al1` | `append` | `sendTime` | Multiple rows per message possible |
+| `iam` | `append` | `sendTime` | Multiple rows per message possible |
+| `dg1` | `append` | `sendTime` | Multiple rows per message possible |
+| `pr1` | `append` | `sendTime` | Multiple rows per message possible |
+| `orc` | `append` | `sendTime` | Multiple rows per message possible |
+| `obr` | `append` | `sendTime` | Multiple rows per message possible |
+| `obx` | `append` | `sendTime` | 8–50 rows per lab message typical |
+| `nte` | `append` | `sendTime` | Multiple rows per message possible |
+| `spm` | `append` | `sendTime` | Multiple rows per message possible |
+| `in1` | `append` | `sendTime` | Multiple rows per message possible |
+| `gt1` | `append` | `sendTime` | Multiple rows per message possible |
+| `ft1` | `append` | `sendTime` | Multiple rows per message possible |
+| `rxa` | `append` | `sendTime` | Multiple rows per message possible |
+| `sch` | `append` | `sendTime` | One row per scheduling message |
+| `txa` | `append` | `sendTime` | One row per document message |
 
 ---
 
 ## **Read API for Data Retrieval**
 
-The HL7 v2 connector reads data from **files**, not a REST API. This section describes the HL7 v2 message format that the parser must understand.
+The HL7 v2 connector fetches messages from the **Google Cloud Healthcare API** via REST. Raw HL7 text is delivered base64-encoded in the `data` field and decoded before parsing.
 
-### HL7 v2 Message Structure
+### List Messages API
+
+**Method**: `GET`
+
+**URL**:
+```
+https://healthcare.googleapis.com/v1/projects/{project_id}/locations/{location}/datasets/{dataset_id}/hl7V2Stores/{hl7v2_store_id}/messages
+```
+
+**Query Parameters**:
+
+| Parameter | Value / Example | Notes |
+|---|---|---|
+| `view` | `FULL` | Required to get raw `data` field. BASIC returns only `name`. |
+| `pageSize` | `1000` | Max allowed value |
+| `pageToken` | `<token from prior response>` | Pagination; omit on first request |
+| `filter` | `sendTime > "2024-01-01T00:00:00Z"` | Incremental filtering by sendTime |
+| `orderBy` | `sendTime asc` | Ensures cursor advances monotonically |
+
+**Example Request**:
+```
+GET https://healthcare.googleapis.com/v1/projects/my-project/locations/us-central1/datasets/my-dataset/hl7V2Stores/my-store/messages?view=FULL&pageSize=1000&filter=sendTime>"2024-01-01T00:00:00Z"&orderBy=sendTime+asc
+Authorization: Bearer <token>
+```
+
+**Response**:
+```json
+{
+  "hl7V2Messages": [
+    {
+      "name": "projects/my-project/locations/us-central1/datasets/my-dataset/hl7V2Stores/my-store/messages/MSG_ID",
+      "data": "<base64-encoded raw HL7 text>",
+      "sendTime": "2024-01-15T12:00:00Z",
+      "createTime": "2024-01-15T12:00:01Z",
+      "messageType": "ADT",
+      "patientIds": [{"patientId": "MRN12345", "type": {"typeCode": "MR"}}],
+      "labels": {}
+    }
+  ],
+  "nextPageToken": "<token for next page>"
+}
+```
+
+**Decoding `data`**: Base64-decode the `data` field to get raw HL7 text, e.g.:
+```python
+import base64
+hl7_text = base64.b64decode(msg["data"]).decode("utf-8", errors="replace")
+```
+
+### Get Single Message API
+
+**Method**: `GET`
+
+**URL**:
+```
+https://healthcare.googleapis.com/v1/{name}
+```
+where `name` = `projects/{project_id}/locations/{location}/datasets/{dataset_id}/hl7V2Stores/{hl7v2_store_id}/messages/{message_id}`
+
+**Query Parameters**: `view=FULL` (defaults to FULL if omitted)
+
+### HL7 v2 Message Structure (after decode)
 
 An HL7 v2 message is a series of **segments**, each on its own line:
 
@@ -1016,25 +1101,25 @@ GT1|1||DOE^JOHN||123 MAIN ST^^SPRINGFIELD^IL^62701
 | Escape character | `\` | MSH-2 position 3 | Escapes special characters |
 | Subcomponent separator | `&` | MSH-2 position 4 | Separates subcomponents within a component |
 
-### File Reading Strategy
+### Message Parsing Strategy
 
-1. **List files** in the `volume_path` matching `file_pattern` (default `*.hl7`)
-2. **Filter by cursor** — only process files with modification time > last cursor
-3. **Parse each file**: split on segment terminator (`\r` or `\r\n` or `\n`), identify segment type by first 3 characters
+1. **Fetch messages** from the API with `view=FULL` and incremental filter on `sendTime`
+2. **Base64-decode** the `data` field to get raw HL7 text
+3. **Parse**: split on segment terminator (`\r` or `\r\n` or `\n`), identify segment type by first 3 characters
 4. **Extract MSH fields** first (MSH-7 timestamp, MSH-10 message ID, MSH-12 version) — these become common columns for all segment tables
-5. **Multi-message files**: A single file may contain multiple messages (each starting with `MSH`). The parser must detect MSH boundaries.
+5. **Multi-message data**: A single `data` field may contain multiple messages (each starting with `MSH`). The parser must detect MSH boundaries.
 6. **Route segments** to appropriate tables based on segment type prefix
 
 ### Pagination / Batching
 
-- **Cursor**: File modification timestamp (epoch seconds). After processing, advance cursor to the latest file timestamp.
-- **Batch size**: Configurable via `max_records_per_batch` table option (default 10,000 records).
-- **Deduplication**: Files already seen are tracked and never re-read.
-- **No rate limits**: File reads from Unity Catalog Volumes have no rate limiting.
+- **Cursor**: `sendTime` (RFC3339 string from the API). After each batch, advance cursor to the latest `sendTime` seen.
+- **Batch size**: Configurable via `max_records_per_batch` table option (default 10,000 records). The connector stops fetching pages once this limit is reached.
+- **Page size**: Max 1000 messages per API page. Use `pageToken` from `nextPageToken` to get the next page.
+- **Rate limits**: TBD — Google Cloud Healthcare API quota limits vary by project; consult GCP quota console.
 
 ### Deleted Records
 
-Not applicable. HL7 message files are immutable. There is no delete synchronization — once a message is ingested, it persists in the Delta table.
+Not applicable. HL7 messages in the GCP Healthcare API store are not deleted during normal operation. There is no delete synchronization — once a message is ingested, it persists in the Delta table.
 
 ---
 
@@ -1100,6 +1185,10 @@ All HL7 fields are stored as **STRING** in the Delta tables. The connector extra
 
 | Source Type | URL | Accessed (UTC) | Confidence | What it confirmed |
 |---|---|---|---|---|
+| Official Docs | https://docs.cloud.google.com/healthcare-api/docs/concepts/hl7v2 | 2026-03-29 | High | HL7v2 store/message concepts, sendTime, messageType, patientIds |
+| Official Docs | https://docs.cloud.google.com/healthcare-api/docs/reference/rest/v1/projects.locations.datasets.hl7V2Stores.messages/list | 2026-03-29 | High | List API params, view=FULL, pageSize max 1000, filter syntax, response schema |
+| Official Docs | https://docs.cloud.google.com/healthcare-api/docs/how-tos/hl7v2-messages | 2026-03-29 | High | How-to: listing, getting, filtering, pagination with pageToken, auth |
+| Official Docs | https://docs.cloud.google.com/healthcare-api/docs/reference/rest/v1/projects.locations.datasets.hl7V2Stores.messages/get | 2026-03-29 | High | GET single message API, view parameter |
 | User-provided documentation | https://hl7-definition.caristix.com/v2/ | 2026-03-27 | Highest | Primary reference for all segment definitions |
 | Caristix HL7 Definition API — MSH | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/MSH | 2026-03-27 | High | MSH segment: 21 fields, data types, usage, max lengths |
 | Caristix HL7 Definition API — EVN | https://hl7-definition.caristix.com/v2-api/1/HL7v2.5.1/Segments/EVN | 2026-03-27 | High | EVN segment: 7 fields, data types, usage |

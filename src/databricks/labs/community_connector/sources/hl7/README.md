@@ -1,165 +1,157 @@
 # Lakeflow HL7 v2 Community Connector
 
-This documentation describes how to configure and use the **HL7 v2** Lakeflow community connector to ingest HL7 v2 message files from a Databricks Unity Catalog Volume into structured Delta tables.
+This documentation provides setup instructions and reference information for the HL7 v2 source connector.
 
-Each HL7 segment type (MSH, PID, PV1, OBR, OBX, IN1, RXA, SCH, TXA, and others) becomes its own streaming table, enabling SQL analytics over clinical, financial, pharmacy, and scheduling data without a separate integration engine. The connector supports **23 named segment types** out of the box plus a **generic fallback** for custom Z-segments and any unrecognized segments.
-
-The connector uses a zero-dependency custom parser and supports HL7 v2.1 through v2.8. New files are picked up incrementally on every pipeline trigger with crash-safe exactly-once delivery via SDP checkpointing.
-
+The Lakeflow HL7 v2 Connector ingests HL7 v2 messages from a **Google Cloud Healthcare API HL7v2 store** and loads each segment type into its own Delta table. This enables structured analytics over clinical data that was originally transmitted in the HL7 v2 pipe-delimited format. The connector supports incremental append-only ingestion, automatically tracking new messages by their API send time.
 
 ## Prerequisites
 
-- **Databricks workspace** with Unity Catalog enabled.
-- **Unity Catalog Volume** containing `.hl7` (or `.txt`) HL7 v2 message files. Files must be uploaded to the volume before or during pipeline execution.
-- **Compute access**: The pipeline cluster must have read access to the volume path.
-
-No external API credentials or authentication tokens are required. Databricks handles Volume access natively through Unity Catalog permissions.
-
+- A **Google Cloud Platform** project with the **Cloud Healthcare API** enabled
+- An **HL7v2 store** within a Healthcare API dataset, containing HL7 v2 messages
+- A **GCP service account** with the following IAM permissions:
+  - `healthcare.hl7V2Messages.list`
+  - `healthcare.hl7V2Messages.get`
+- A JSON key file for the service account
 
 ## Setup
 
 ### Required Connection Parameters
 
-Provide the following **connection-level** options when configuring the connector. These correspond to the connection options exposed by the connector.
+To configure the connector, provide the following parameters in your connector options:
 
-| Name | Type | Required | Description | Example |
-|------|------|----------|-------------|---------|
-| `volume_path` | string | yes | Path to the Unity Catalog Volume directory containing HL7 v2 message files. Must be accessible to the pipeline compute. | `/Volumes/healthcare/raw/hl7_feed/` |
-| `file_pattern` | string | no | Glob pattern used to match HL7 files within the volume path. Defaults to `*.hl7`. Use `**/*.hl7` for recursive directory search or `*.txt` if files use the `.txt` extension. | `**/*.hl7` |
-| `externalOptionsAllowList` | string | yes | Comma-separated list of table-specific option names that are allowed to be passed through to the connector. This connector requires table-specific options, so this parameter must be set. | `volume_path,file_pattern,segment_type,max_records_per_batch` |
+| Parameter | Type | Required | Description | Example |
+|---|---|---|---|---|
+| `project_id` | string | Yes | GCP project ID containing the Healthcare dataset | `my-gcp-project` |
+| `location` | string | Yes | GCP region where the Healthcare dataset resides | `us-central1` |
+| `dataset_id` | string | Yes | Google Cloud Healthcare API dataset ID | `My_Clinical_Dataset` |
+| `hl7v2_store_id` | string | Yes | HL7v2 store name within the Healthcare dataset | `ehr_messages` |
+| `service_account_json` | string | Yes | Full JSON content of a GCP service account key file | `{"type": "service_account", ...}` |
 
-The full list of supported table-specific options for `externalOptionsAllowList` is:
-`volume_path,file_pattern,segment_type,max_records_per_batch`
+### Table-Level Options
 
-> **Note**: Table-specific options such as `segment_type` and `max_records_per_batch` are provided per-table via table options in the pipeline specification. These option names must be included in `externalOptionsAllowList` for the connection to allow them.
+The following options can be set per table via `table_configuration`:
 
-### Obtaining the Required Parameters
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `segment_type` | string | *(table name)* | Override the HL7 segment type to extract. Use this to ingest custom Z-segments (e.g., `ZPD`) through any table name. |
+| `window_seconds` | string | `86400` | Duration in seconds of the sliding time window used for incremental reads. Smaller values produce smaller, faster batches. |
+| `start_timestamp` | string | *(auto-discovered)* | RFC 3339 timestamp to start reading from when no prior offset exists (e.g., `2024-01-01T00:00:00Z`). If omitted, the connector auto-discovers the oldest message in the store. |
 
-- **Volume path**: Navigate to a Unity Catalog Volume in your workspace that contains (or will contain) the HL7 v2 message files. The path follows the format `/Volumes/<catalog>/<schema>/<volume>/<optional_subdirectory>/`. Verify that your pipeline compute has `READ VOLUME` permission on the volume.
-- **File pattern**: The default `*.hl7` matches files with the `.hl7` extension in the top-level directory. If files arrive in date-partitioned subdirectories (e.g. `2024/01/15/feed.hl7`), use `**/*.hl7` for recursive matching. If files use the `.txt` extension, use `*.txt` instead.
+To use table-level options, include them in the `externalOptionsAllowList` connection parameter:
+
+```
+segment_type,window_seconds,start_timestamp
+```
+
+### Obtaining the Connection Parameters
+
+#### Project, Location, Dataset, and Store IDs
+
+1. Open the [Google Cloud Console](https://console.cloud.google.com)
+2. Navigate to **Healthcare > Datasets**
+3. Click into your dataset to find the **dataset ID** and **location** (shown in the breadcrumb, e.g., `Best_Clinics_Dataset (northamerica-northeast1)`)
+4. Click into the HL7v2 store to find the **store ID** (shown in the Details section)
+5. The **project ID** is visible in the project selector at the top of the console
+
+The full resource path shown in the store details page follows this pattern:
+```
+projects/{project_id}/locations/{location}/datasets/{dataset_id}/hl7V2Stores/{hl7v2_store_id}
+```
+
+#### Service Account Key
+
+1. In GCP Console, go to **IAM & Admin > Service Accounts**
+2. Create a new service account or select an existing one
+3. Grant it the **Healthcare HL7v2 Message Editor** role (or a custom role with `healthcare.hl7V2Messages.list` and `healthcare.hl7V2Messages.get`)
+4. Click on the service account > **Keys** tab > **Add Key** > **Create new key** > **JSON**
+5. A `.json` key file will be downloaded. Paste the entire contents of this file as the `service_account_json` parameter.
 
 ### Create a Unity Catalog Connection
 
 A Unity Catalog connection for this connector can be created in two ways via the UI:
-
-1. Follow the **Lakeflow Community Connector** UI flow from the **Add Data** page.
+1. Follow the Lakeflow Community Connector UI flow from the "Add Data" page
 2. Select any existing Lakeflow Community Connector connection for this source or create a new one.
-3. Set `externalOptionsAllowList` to `volume_path,file_pattern,segment_type,max_records_per_batch` (required for this connector to pass table-specific options).
-
-The connection can also be created using SQL:
-
-```sql
-CREATE CONNECTION hl7_hospital_feed
-TYPE LAKEFLOW_COMMUNITY
-OPTIONS (
-  connector                = 'hl7',
-  volume_path              = '/Volumes/healthcare/raw/hl7_feed/',
-  file_pattern             = '*.hl7',
-  externalOptionsAllowList = 'volume_path,file_pattern,segment_type,max_records_per_batch'
-);
-```
+3. Set the `externalOptionsAllowList` to: `segment_type,window_seconds,start_timestamp`
 
 The connection can also be created using the standard Unity Catalog API.
 
 
 ## Supported Objects
 
-The HL7 v2 connector exposes a **static list of 23 segment tables** organized into functional categories. Each HL7 segment type becomes its own table. Additionally, a **generic fallback schema** handles custom Z-segments and any unrecognized segment types.
+The connector exposes one table per HL7 v2 segment type. The list is static and based on the HL7 v2.5.1 specification. Not all messages contain all segment types — the tables you see data in depend on the message types in your HL7v2 store (e.g., ADT, ORU, DFT, SIU).
 
-All tables share four common metadata columns that serve as join keys and traceability fields:
+### Patient Administration
 
-| Column | Source | Description |
-|--------|--------|-------------|
-| `message_id` | MSH-10 | Unique message control ID; primary join key across all segment tables |
-| `message_timestamp` | MSH-7 | Message date/time in raw HL7 DTM format, e.g. `20240115120000` |
-| `hl7_version` | MSH-12 | HL7 version string, e.g. `2.5.1` |
-| `source_file` | filename | Basename of the source `.hl7` file for traceability |
-| `raw_segment` | segment line | Raw pipe-delimited text of the HL7 segment for lossless recovery and debugging |
+| Table | Segment | Description | Primary Keys |
+|---|---|---|---|
+| `msh` | MSH | Message Header — one row per HL7 message | `message_id` |
+| `evn` | EVN | Event Type — trigger event metadata | `message_id` |
+| `pid` | PID | Patient Identification — demographics and identifiers | `message_id` |
+| `pd1` | PD1 | Patient Additional Demographic — living will, organ donor, primary facility | `message_id` |
+| `pv1` | PV1 | Patient Visit — encounter/admission data | `message_id` |
+| `pv2` | PV2 | Patient Visit Additional — admit reason, expected dates | `message_id` |
+| `nk1` | NK1 | Next of Kin / Associated Parties | `message_id`, `set_id` |
+| `mrg` | MRG | Merge Patient Information — prior identifiers | `message_id` |
 
-### Object summary, primary keys, and ingestion mode
+### Clinical
 
-The connector defines the ingestion mode and primary key for each table. Segment types that appear at most once per message use `message_id` alone as the primary key. Repeating segment types use the composite key `(message_id, set_id)`.
+| Table | Segment | Description | Primary Keys |
+|---|---|---|---|
+| `al1` | AL1 | Patient Allergy Information | `message_id`, `set_id` |
+| `iam` | IAM | Patient Adverse Reaction Information | `message_id`, `set_id` |
+| `dg1` | DG1 | Diagnosis — admitting, working, and final diagnoses | `message_id`, `set_id` |
+| `pr1` | PR1 | Procedures — surgical, diagnostic, and therapeutic | `message_id`, `set_id` |
 
-#### Patient Administration
+### Orders and Results
 
-| Table | Description | Ingestion Type | Primary Key | Rows per Message |
-|-------|-------------|----------------|-------------|------------------|
-| `msh` | Message Header -- routing info, message type, timestamp, HL7 version | `cdc` | `message_id` | One |
-| `evn` | Event Type -- trigger event metadata, event reason, operator | `cdc` | `message_id` | One |
-| `pid` | Patient Identification -- demographics, MRN, address, phone | `cdc` | `message_id` | One |
-| `pd1` | Patient Additional Demographic -- living will, organ donor, military info | `cdc` | `message_id` | One |
-| `pv1` | Patient Visit -- encounter details, bed location, attending physician, admit/discharge times | `cdc` | `message_id` | One |
-| `pv2` | Patient Visit Additional -- admit reason, expected dates, mode of arrival, patient condition | `cdc` | `message_id` | One |
-| `nk1` | Next of Kin / Associated Parties -- emergency contacts, relationship, phone | `cdc` | `message_id`, `set_id` | Multiple |
-| `mrg` | Merge Patient Information -- prior identifiers for merge/link/unlink events | `cdc` | `message_id` | One |
+| Table | Segment | Description | Primary Keys |
+|---|---|---|---|
+| `orc` | ORC | Common Order — order control, status, and provider info | `message_id`, `set_id` |
+| `obr` | OBR | Observation Request — lab/radiology orders | `message_id`, `set_id` |
+| `obx` | OBX | Observation Result — individual test results | `message_id`, `set_id` |
+| `nte` | NTE | Notes and Comments — free-text annotations | `message_id`, `set_id` |
+| `spm` | SPM | Specimen — type, collection, and handling details | `message_id`, `set_id` |
 
-#### Clinical
+### Financial and Insurance
 
-| Table | Description | Ingestion Type | Primary Key | Rows per Message |
-|-------|-------------|----------------|-------------|------------------|
-| `al1` | Patient Allergy -- allergen code, type, severity, reaction | `cdc` | `message_id`, `set_id` | Multiple |
-| `iam` | Patient Adverse Reaction -- newer replacement for AL1 with action-code support | `cdc` | `message_id`, `set_id` | Multiple |
-| `dg1` | Diagnosis -- ICD/SNOMED code, type (admitting/working/final), DRG details | `cdc` | `message_id`, `set_id` | Multiple |
-| `pr1` | Procedures -- CPT/ICD procedure code, datetime, duration, anesthesia details | `cdc` | `message_id`, `set_id` | Multiple |
+| Table | Segment | Description | Primary Keys |
+|---|---|---|---|
+| `in1` | IN1 | Insurance — policy coverage and billing | `message_id`, `set_id` |
+| `gt1` | GT1 | Guarantor — financially responsible party | `message_id`, `set_id` |
+| `ft1` | FT1 | Financial Transaction — charges, payments, adjustments | `message_id`, `set_id` |
 
-#### Orders and Results
+### Pharmacy, Scheduling, and Documents
 
-| Table | Description | Ingestion Type | Primary Key | Rows per Message |
-|-------|-------------|----------------|-------------|------------------|
-| `orc` | Common Order -- order control, placer/filler numbers, status, ordering provider | `cdc` | `message_id`, `set_id` | Multiple |
-| `obr` | Observation Request -- ordered test, specimen details, ordering provider, result status | `cdc` | `message_id`, `set_id` | Multiple |
-| `obx` | Observation Result -- individual lab value, vital sign, or coded observation with units, range, and abnormal flag | `cdc` | `message_id`, `set_id` | Multiple |
-| `nte` | Notes and Comments -- free-text annotations attached to orders or results | `cdc` | `message_id`, `set_id` | Multiple |
-| `spm` | Specimen -- specimen type, collection details, handling instructions, condition | `cdc` | `message_id`, `set_id` | Multiple |
+| Table | Segment | Description | Primary Keys |
+|---|---|---|---|
+| `rxa` | RXA | Pharmacy/Treatment Administration | `message_id`, `set_id` |
+| `sch` | SCH | Scheduling Activity Information | `message_id` |
+| `txa` | TXA | Transcription Document Header | `message_id` |
 
-#### Financial and Insurance
+### Custom / Z-Segments
 
-| Table | Description | Ingestion Type | Primary Key | Rows per Message |
-|-------|-------------|----------------|-------------|------------------|
-| `in1` | Insurance -- plan, company, group number, policy, coverage dates | `cdc` | `message_id`, `set_id` | Multiple |
-| `gt1` | Guarantor -- financially responsible party, address, employer, financial class | `cdc` | `message_id`, `set_id` | Multiple |
-| `ft1` | Financial Transaction -- charges, payments, adjustments with codes and amounts | `cdc` | `message_id`, `set_id` | Multiple |
+Arbitrary Z-segments (site-specific custom segments) can be ingested by setting the `segment_type` table option to the desired segment prefix (e.g., `ZPD`). Z-segments produce a generic schema with columns `field_1` through `field_25` plus the standard metadata columns.
 
-#### Pharmacy
+### Incremental Ingestion
 
-| Table | Description | Ingestion Type | Primary Key | Rows per Message |
-|-------|-------------|----------------|-------------|------------------|
-| `rxa` | Pharmacy/Treatment Administration -- drug/vaccine code, dose, lot number, completion status | `cdc` | `message_id`, `set_id` | Multiple |
+All tables use **append-only** incremental ingestion:
 
-#### Scheduling and Documents
+- New messages are tracked by the `sendTime` timestamp from the Google Cloud Healthcare API (stored as the `send_time` column).
+- The connector uses a **sliding time window** to bound each micro-batch, advancing the cursor forward with each run.
+- Messages already processed are never re-fetched. No change feeds, upserts, or deletes are produced.
 
-| Table | Description | Ingestion Type | Primary Key | Rows per Message |
-|-------|-------------|----------------|-------------|------------------|
-| `sch` | Scheduling Activity -- appointment IDs, reason, type, duration, contact information | `cdc` | `message_id` | One |
-| `txa` | Transcription Document Header -- document type, number, completion status, authenticator | `cdc` | `message_id` | One |
+### Common Metadata Columns
 
-#### Custom / Z-Segments
+Every table includes the following columns for traceability and cross-table joins:
 
-Site-specific Z-segments (e.g. `ZPD`, `ZIN`) and any unrecognized segment types are supported via the `segment_type` table option. The connector falls back to a generic schema with `segment_type` + `field_1` through `field_25` columns:
-
-```json
-{
-  "table": {
-    "source_table": "zpd",
-    "table_configuration": {
-      "segment_type": "ZPD"
-    }
-  }
-}
-```
-
-### Incremental ingestion
-
-All tables use an incremental cursor based on **file modification timestamp** (epoch seconds). On each pipeline trigger, only files modified after the last cursor value are read. SDP checkpointing ensures exactly-once delivery even after cluster failures.
-
-| Property | Value |
-|----------|-------|
-| Ingestion type | `cdc` |
-| Cursor field | `message_timestamp` (from MSH-7, used for CDC ordering) |
-| File cursor | File modification timestamp (epoch seconds) |
-| Deduplication | Files already processed are never re-read |
-| Multi-message files | Batch files containing multiple MSH segments are fully supported |
-| Batch envelope segments | FHS, BHS, BTS, FTS segments are automatically skipped |
+| Column | Description |
+|---|---|
+| `message_id` | Unique message control ID from MSH-10 — the primary join key across all tables |
+| `message_timestamp` | Message date/time string from MSH-7 (e.g., `20240115120000`) |
+| `hl7_version` | HL7 version (e.g., `2.5.1`) from MSH-12 |
+| `source_file` | API resource name of the source HL7 message for traceability |
+| `send_time` | Message send time from the GCP Healthcare API (RFC 3339); used as the incremental cursor |
+| `raw_segment` | The original unparsed HL7 segment text |
 
 
 ## Table Configurations
@@ -169,8 +161,8 @@ All tables use an incremental cursor based on **file modification timestamp** (e
 These are set directly under each `table` object in the pipeline spec:
 
 | Option | Required | Description |
-|--------|----------|-------------|
-| `source_table` | Yes | Table name in the source system -- one of the 23 supported segment names (e.g. `pid`, `obx`, `in1`) or a custom name when using `segment_type` |
+|---|---|---|
+| `source_table` | Yes | Table name in the source system (e.g., `pid`, `obx`, `msh`) |
 | `destination_catalog` | No | Target catalog (defaults to pipeline's default) |
 | `destination_schema` | No | Target schema (defaults to pipeline's default) |
 | `destination_table` | No | Target table name (defaults to `source_table`) |
@@ -180,204 +172,105 @@ These are set directly under each `table` object in the pipeline spec:
 These are set inside the `table_configuration` map alongside any source-specific options:
 
 | Option | Required | Description |
-|--------|----------|-------------|
+|---|---|---|
 | `scd_type` | No | `SCD_TYPE_1` (default) or `SCD_TYPE_2`. Only applicable to tables with CDC or SNAPSHOT ingestion mode; APPEND_ONLY tables do not support this option. |
 | `primary_keys` | No | List of columns to override the connector's default primary keys |
 | `sequence_by` | No | Column used to order records for SCD Type 2 change tracking |
 
-### Source-specific `table_configuration` options
+### Source-Specific `table_configuration` options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `segment_type` | table name | Override the HL7 segment type to extract. Use this for Z-segments or when the table name differs from the segment type (e.g. source_table `zpd` with segment_type `ZPD`). |
-| `max_records_per_batch` | `10000` | Maximum number of records returned per micro-batch trigger. Increase for high-volume feeds or decrease for tighter latency control. |
+| Option | Required | Description |
+|---|---|---|
+| `segment_type` | No | Override the HL7 segment type to extract (e.g., `ZPD` for a custom Z-segment). Defaults to the `source_table` name. |
+| `window_seconds` | No | Sliding window duration in seconds. Default: `86400` (1 day). Use smaller values (e.g., `3600`) for higher-volume stores. |
+| `start_timestamp` | No | RFC 3339 timestamp to begin reading from (e.g., `2024-01-01T00:00:00Z`). If omitted, the connector auto-discovers the oldest message. |
 
 
 ## Data Type Mapping
 
-HL7 v2 messages are pipe-delimited text. The connector maps wire-format values to Spark types as follows:
+All HL7 v2 fields are stored as `STRING` in the Delta tables. The connector extracts specific components from composite HL7 data types and stores them as individual string columns. Downstream SQL queries can cast as needed.
 
-| HL7 Wire Format | Example Fields | Spark Type | Notes |
-|-----------------|----------------|------------|-------|
-| String (most fields) | names, codes, addresses, composite fields | `StringType` | All HL7 field values are natively strings; the connector preserves them as-is. |
-| Set ID / sequence number | `set_id`, `sequence_number`, `birth_order`, `outlier_days` | `LongType` | Integer fields guaranteed to be numeric in the HL7 spec. Parsed to long; `null` on parse failure. |
-| Date/time (DTM format) | `date_of_birth`, `admit_datetime`, `observation_datetime` | `TimestampType` | HL7 DTM strings (e.g. `20240115120000+0500`) are parsed to Spark timestamps. Supports partial precision (YYYY, YYYYMM, YYYYMMDD, YYYYMMDDHHMMSS) and optional timezone offsets. |
-| Composite fields | `patient_name`, `allergen_code`, `ordering_provider` | `StringType` (raw) + decomposed component columns | Composite fields are stored as both the raw pipe-delimited value and individual component columns (e.g. `patient_name` raw alongside `patient_family_name`, `patient_given_name`). |
-| Primary key (message_id) | `message_id` | `StringType` (NOT NULL) | Non-nullable to support Unity Catalog PRIMARY KEY constraints. |
-| Primary key (set_id) | `set_id` on repeating segments | `LongType` (NOT NULL) | Non-nullable composite key for repeating segment tables. Defaults to 1 when the source segment lacks a set ID. |
-| Absent fields | Any field not present in a given message version | `null` | Fields absent from a message are returned as `null`. Schemas are supersets covering HL7 v2.1 through v2.8. |
+| HL7 Data Type | Examples | Databricks Type | Notes |
+|---|---|---|---|
+| ST, TX, FT, IS, ID | Plain text, coded values | STRING | Stored as-is |
+| NM, SI | Numeric strings | STRING | Cast with `CAST(col AS INT)` or `CAST(col AS DOUBLE)` as needed |
+| TS, DT, TM | Timestamps, dates, times | STRING | HL7 DTM format (e.g., `20240115120000`). Datetime fields like `date_of_birth` and `admit_datetime` are parsed to `TIMESTAMP` by the connector. |
+| CE, CWE, CNE | Coded elements | STRING | Individual components extracted (e.g., `code`, `text`, `coding_system`) |
+| XPN | Person name | STRING | Components extracted: `family_name`, `given_name`, `middle_name` |
+| XAD | Address | STRING | Components extracted: `street`, `city`, `state`, `zip`, `country` |
+| XCN | Composite ID and name | STRING | Components extracted: `id`, `family_name`, `given_name` |
+| CX | Extended composite ID | STRING | Component 1 extracted (ID value) |
+| HD, EI | Hierarchic/entity identifiers | STRING | Component 1 extracted (namespace/entity ID) |
+| PL | Person location | STRING | Components extracted: `point_of_care`, `room`, `bed`, `facility` |
 
-The connector is designed to:
-- Preserve raw composite fields alongside their decomposed components for flexibility.
-- Parse HL7 DTM timestamps including partial precision and timezone offsets.
-- Treat absent or empty fields as `null` to conform to Lakeflow expectations.
-- Retain the original raw segment text in every row via the `raw_segment` column for lossless recovery and debugging.
+**Special columns:**
+- `set_id` is stored as `BIGINT` — the sequence number for repeating segments within a message.
+- Datetime fields parsed from HL7 DTM format (e.g., `date_of_birth`, `admit_datetime`, `observation_datetime`) are stored as `TIMESTAMP`.
 
 
 ## How to Run
 
 ### Step 1: Clone/Copy the Source Connector Code
-
-Follow the Lakeflow Community Connector UI flow from the **Add Data** page, which will guide you through setting up a pipeline using the selected source connector code.
+Follow the Lakeflow Community Connector UI, which will guide you through setting up a pipeline using the selected source connector code.
 
 ### Step 2: Configure Your Pipeline
-
 1. Update the `pipeline_spec` in the main pipeline file (e.g., `ingest.py`).
-2. Configure which segment tables to ingest and any per-table options such as `segment_type` for Z-segments or `max_records_per_batch` for batch size control.
-
-Example `pipeline_spec` snippet:
-
+2. Configure the tables you want to ingest. Each HL7 segment type is a separate table:
 ```json
 {
   "pipeline_spec": {
-    "connection_name": "hl7_hospital_feed",
-    "object": [
-      {
-        "table": {
-          "source_table": "msh"
+      "connection_name": "my_hl7_connection",
+      "object": [
+        {
+            "table": {
+                "source_table": "pid",
+                "table_configuration": {
+                    "window_seconds": "3600"
+                }
+            }
+        },
+        {
+            "table": {
+                "source_table": "obx",
+                "table_configuration": {
+                    "window_seconds": "3600"
+                }
+            }
+        },
+        {
+            "table": {
+                "source_table": "msh"
+            }
         }
-      },
-      {
-        "table": {
-          "source_table": "pid"
-        }
-      },
-      {
-        "table": {
-          "source_table": "pv1"
-        }
-      },
-      {
-        "table": {
-          "source_table": "obr"
-        }
-      },
-      {
-        "table": {
-          "source_table": "obx",
-          "table_configuration": {
-            "max_records_per_batch": "50000"
-          }
-        }
-      },
-      {
-        "table": {
-          "source_table": "al1"
-        }
-      },
-      {
-        "table": {
-          "source_table": "dg1"
-        }
-      },
-      {
-        "table": {
-          "source_table": "in1"
-        }
-      },
-      {
-        "table": {
-          "source_table": "rxa"
-        }
-      },
-      {
-        "table": {
-          "source_table": "zpd",
-          "table_configuration": {
-            "segment_type": "ZPD"
-          }
-        }
-      }
-    ]
+      ]
   }
 }
 ```
-
-- `connection_name` must point to the UC connection configured with your `volume_path` (and optional `file_pattern`).
-- For each `table`: `source_table` must be one of the 23 supported segment names or a custom name when using `segment_type`.
-- You do not need to ingest all 23 tables. Start with the segments present in your message types.
-
 3. (Optional) Customize the source connector code if needed for special use cases.
 
 ### Step 3: Run and Schedule the Pipeline
 
-Run the pipeline using your standard Lakeflow / Databricks orchestration (e.g., a scheduled job or workflow). The connector is incremental:
-
-- On the **first run**, all matching files in the volume are processed.
-- On **subsequent runs**, only files with a modification timestamp after the last cursor are processed.
-
 #### Best Practices
 
-- **Start small**: Begin by syncing a subset of segment tables (e.g. `msh`, `pid`, `pv1`, `obx`) to validate configuration and data shape before adding all 23 tables.
-- **Use incremental sync**: The connector automatically uses file modification timestamps as cursors. Avoid clearing pipeline checkpoints unless you need a full reprocess.
-- **OBX volume**: A single lab message can produce 10-50 OBX rows. The `obx` table will be significantly larger than others. Set a higher `max_records_per_batch` for this table and consider partitioning by `message_timestamp` for query efficiency.
-- **Batch size**: For high-volume feeds (over 100k messages/day), set `max_records_per_batch` to `50000` and use a triggered schedule.
-- **File pattern**: Use `**/*.hl7` if files arrive in date-partitioned subdirectories (e.g. `2024/01/15/feed.hl7`).
-- **Z-segments**: Add one pipeline table entry per Z-segment type you want to capture, each with the `segment_type` option set. Each gets its own Delta table with the generic 25-field schema.
-- **Schema evolution**: The connector includes superset schemas covering HL7 v2.1 through v2.8. When upgrading to a newer HL7 version that adds fields, no schema changes are needed -- new fields will be populated and older records will have `null` for those columns.
-
-#### Joining Segment Tables
-
-All tables share `message_id` (from MSH-10) as a join key. Example queries:
-
-```sql
--- Lab results with patient demographics
-SELECT
-    p.patient_family_name,
-    p.patient_given_name,
-    p.date_of_birth,
-    o.observation_id,
-    o.observation_text,
-    o.observation_value,
-    o.units_code,
-    o.interpretation_codes
-FROM healthcare_prod.silver.pid  p
-JOIN healthcare_prod.silver.obx  o  USING (message_id)
-JOIN healthcare_prod.silver.obr  r  USING (message_id)
-WHERE r.result_status = 'F'
-  AND o.observation_id = '2951-2'   -- Sodium (LOINC)
-ORDER BY o.message_timestamp DESC;
-```
-
-```sql
--- Insurance coverage for admitted patients
-SELECT
-    p.patient_family_name,
-    p.patient_given_name,
-    v.patient_class,
-    v.admit_datetime,
-    i.insurance_plan_text,
-    i.group_number,
-    i.plan_effective_date,
-    i.plan_expiration_date
-FROM healthcare_prod.silver.pid  p
-JOIN healthcare_prod.silver.pv1  v  USING (message_id)
-JOIN healthcare_prod.silver.in1  i  USING (message_id)
-WHERE v.patient_class = 'I'
-ORDER BY v.admit_datetime DESC;
-```
+- **Start Small**: Begin by syncing a few key segment types (e.g., `msh`, `pid`, `pv1`, `obx`) before adding the full set.
+- **Use Incremental Sync**: The connector automatically tracks progress via the `sendTime` cursor, minimizing redundant API calls.
+- **Tune the Window Size**: For high-volume stores, reduce `window_seconds` (e.g., `3600` for 1-hour windows) to keep each micro-batch manageable. For low-volume stores, the default of `86400` (1 day) works well.
+- **Monitor GCP Quotas**: The Google Cloud Healthcare API has per-project quota limits. Check the [GCP quota console](https://console.cloud.google.com/iam-admin/quotas) and adjust pipeline frequency accordingly.
+- **Join Across Tables**: Use the `message_id` column to join data across segment tables (e.g., join `pid` with `obx` to link patient demographics to lab results).
 
 #### Troubleshooting
 
 **Common Issues:**
 
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| Table returns 0 rows | No matching files in `volume_path` | Verify the path and `file_pattern` match actual file locations. Check Unity Catalog Volume permissions. |
-| `evn` / `al1` / `sch` / `txa` tables are empty | Those segments are absent from your messages | Normal -- not all HL7 message types include every segment. ADT messages typically include MSH, EVN, PID, PV1; ORU messages include MSH, PID, OBR, OBX. |
-| `message_id` is null | MSH-10 (Message Control ID) missing from source messages | Non-standard HL7 -- check the upstream sending system configuration. |
-| Duplicate records after a restart | Pipeline checkpoint was cleared | Expected on full-refresh. Use a triggered schedule to avoid large backlogs. |
-| Z-segment columns are all null | `segment_type` table option not set | Add the `segment_type` option with the exact segment name in uppercase (e.g. `ZPD`). |
-| `'volume_path' is required` error | Connection missing the `volume_path` parameter | Ensure `volume_path` is set in the Unity Catalog connection options. |
-| Files not being picked up incrementally | Files overwritten in place with same mtime | The cursor tracks file modification time. If files are replaced without updating mtime, they will not be re-read. Ensure new files have a newer modification timestamp. |
+- **Authentication Errors**: Verify that `service_account_json` contains the complete JSON key file contents and that the service account has the required Healthcare API permissions.
+- **No Data Returned**: Check that the HL7v2 store contains messages and that the `location`, `dataset_id`, and `hl7v2_store_id` are correct. Use the GCP Console to verify.
+- **Slow Ingestion**: Reduce `window_seconds` to process smaller time ranges per batch. Ensure the HL7v2 store is in a region with low latency to your Databricks workspace.
+- **Missing Segments**: Not all HL7 messages contain all segment types. ADT messages typically include MSH, EVN, PID, PV1 but not OBR/OBX. ORU messages include MSH, PID, ORC, OBR, OBX but may omit EVN, AL1, DG1.
 
 
 ## References
 
-- Connector implementation: `src/databricks/labs/community_connector/sources/hl7/hl7.py`
-- Parser implementation: `src/databricks/labs/community_connector/sources/hl7/hl7_parser.py`
-- Schema definitions: `src/databricks/labs/community_connector/sources/hl7/hl7_schemas.py`
-- Connector specification: `src/databricks/labs/community_connector/sources/hl7/connector_spec.yaml`
-- HL7 International:
-  - `https://www.hl7.org/implement/standards/product_brief.cfm?product_id=185` (HL7 v2 standard)
-  - `https://hl7-definition.caristix.com/v2/` (Caristix HL7 v2 field reference)
+- [Google Cloud Healthcare API — HL7v2 Concepts](https://cloud.google.com/healthcare-api/docs/concepts/hl7v2)
+- [Healthcare API — List Messages](https://cloud.google.com/healthcare-api/docs/reference/rest/v1/projects.locations.datasets.hl7V2Stores.messages/list)
+- [Healthcare API — Authentication](https://cloud.google.com/healthcare-api/docs/how-tos/hl7v2-messages)
+- [HL7 v2.5.1 Segment Definitions (Caristix)](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments)
