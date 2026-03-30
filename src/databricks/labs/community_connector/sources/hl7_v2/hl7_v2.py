@@ -1262,13 +1262,7 @@ class HL7V2LakeflowConnect(LakeflowConnect):
         )
 
         raw_sa = options["service_account_json"]
-        if isinstance(raw_sa, dict):
-            sa_info = raw_sa
-        else:
-            try:
-                sa_info = json.loads(raw_sa)
-            except json.JSONDecodeError:
-                sa_info = json.loads(raw_sa, strict=False)
+        sa_info = self._parse_service_account_json(raw_sa)
         self._creds = google_sa.Credentials.from_service_account_info(
             sa_info, scopes=["https://www.googleapis.com/auth/cloud-platform"]
         )
@@ -1289,6 +1283,63 @@ class HL7V2LakeflowConnect(LakeflowConnect):
         self._delta_cache: list[dict] | None = None
         self._delta_preload_error: str | None = None
         self._preload_delta()
+
+    @staticmethod
+    def _parse_service_account_json(raw: str | dict) -> dict:
+        """Parse a service-account JSON value that may arrive in several forms.
+
+        UC connection options can deliver the value as:
+        * A ``dict`` (already parsed by the framework)
+        * A well-formed JSON string
+        * A double-serialised JSON string (``'"{\\"type\\":…}"'``)
+        * A base64-encoded JSON string (some UI flows encode binary-like values)
+        """
+        if isinstance(raw, dict):
+            return raw
+
+        raw = raw.strip()
+
+        # Attempt 1: direct parse
+        try:
+            parsed = json.loads(raw, strict=False)
+            if isinstance(parsed, dict):
+                return parsed
+            # Double-serialised — json.loads returned a string, parse again
+            if isinstance(parsed, str):
+                inner = json.loads(parsed, strict=False)
+                if isinstance(inner, dict):
+                    return inner
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Attempt 2: base64-decode then parse
+        try:
+            decoded = base64.b64decode(raw, validate=True).decode("utf-8")
+            parsed = json.loads(decoded, strict=False)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+        # Attempt 3: find a JSON object embedded in the string
+        brace_start = raw.find("{")
+        brace_end = raw.rfind("}")
+        if brace_start != -1 and brace_end > brace_start:
+            try:
+                parsed = json.loads(raw[brace_start:brace_end + 1], strict=False)
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+
+        preview = raw[:120] + ("…" if len(raw) > 120 else "")
+        raise ValueError(
+            f"Could not parse 'service_account_json' as a JSON object. "
+            f"Received value (first 120 chars): {preview!r}. "
+            f"Ensure the entire contents of the GCP service account JSON key "
+            f"file are pasted into the connection parameter — it should start "
+            f"with '{{' and end with '}}'."
+        )
 
     # ------------------------------------------------------------------
     # HTTP helpers
