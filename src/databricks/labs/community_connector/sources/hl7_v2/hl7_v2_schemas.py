@@ -63,7 +63,7 @@ def _pk_i(name: str, comment: str = "") -> StructField:
 
 # Fields present in every segment table.
 _METADATA_FIELDS: list[StructField] = [
-    _pk_s("message_id",     "Unique message identifier (MSH-10); primary join key across all segment tables"),
+    _s("message_id",        "Unique message identifier (MSH-10); primary join key across all segment tables"),
     _s("message_timestamp", "Message creation date/time (MSH-7) in HL7 DTM format, e.g. 20240101120000"),
     _s("hl7_version",       "HL7 version string (MSH-12), e.g. 2.5.1"),
     _s("source_file",       "API resource name of the source HL7 message for traceability"),

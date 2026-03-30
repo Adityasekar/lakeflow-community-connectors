@@ -72,6 +72,16 @@ connection:
         ID of a Databricks SQL warehouse to execute queries against the
         Delta table. Required when source_type is "delta".
 
+    - name: delta_query_mode
+      type: string
+      required: false
+      description: >
+        Controls how the Delta table is read. "preload" (default) loads
+        the entire table into memory at init — fast for small tables.
+        "per_window" issues a live SQL query per micro-batch window —
+        scales to arbitrarily large tables with no memory overhead.
+        Only applies when source_type is "delta".
+
     # -- GCP mode parameters (required when source_type is "gcp") ------------
     - name: project_id
       type: string

@@ -55,6 +55,7 @@ The `source_type` parameter determines which set of connection parameters is req
 | `databricks_host` | string | Yes | Databricks workspace URL | `https://my-workspace.cloud.databricks.com` |
 | `databricks_token` | string | Yes | Databricks personal access token (PAT) or service principal token | `dapi...` |
 | `sql_warehouse_id` | string | Yes | ID of a SQL warehouse used to query the Delta table | `01370556fad60fda` |
+| `delta_query_mode` | string | No | `preload` (default) loads the entire table into memory at init — fast for small tables. `per_window` issues a live SQL query per micro-batch window — scales to large tables with no memory overhead. | `per_window` |
 
 > **Why are Databricks credentials needed?** The Lakeflow Connect pipeline framework uses the Spark Python Data Source API, which runs connector code in a subprocess where SparkSession is unavailable. To read the Delta table, the connector queries it via the Databricks SQL Statement Execution REST API, which requires explicit workspace credentials -- the same pattern used by the GCP mode with its `service_account_json`.
 
@@ -415,6 +416,7 @@ Follow the Lakeflow Community Connector UI, which will guide you through setting
 - **Table Not Found**: Verify that `delta_table_name` is a fully-qualified three-level name (e.g., `my_catalog.bronze.hl7_raw`) and that the pipeline's service principal has `SELECT` permissions on the table.
 - **No Data Returned**: Confirm the table has rows with `sendTime` values and that the `data` column contains valid HL7 message text. You can verify with: `SELECT sendTime, substring(data, 1, 50) FROM my_catalog.bronze.hl7_raw LIMIT 5` -- the `data` column should start with `MSH|`.
 - **Parse Errors**: Ensure the `data` column contains the raw pipe-delimited HL7 text, not base64-encoded data. If your data is base64-encoded, decode it: `UPDATE my_table SET data = cast(unbase64(data) as STRING)`.
+- **Out of Memory / Large Tables**: The default `delta_query_mode=preload` loads the entire table into memory at connector init. If your Bronze table has hundreds of thousands of rows or more, set `delta_query_mode` to `per_window` in the connection parameters. This issues a scoped SQL query per micro-batch instead, with no memory overhead.
 
 
 ## References
