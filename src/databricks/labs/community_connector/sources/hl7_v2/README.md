@@ -27,7 +27,7 @@ The connector supports two source modes, controlled by the `source_type` connect
 ### Delta Mode
 
 - A **Delta table** in Unity Catalog containing raw HL7 v2 messages (see [Delta Table Schema Requirements](#delta-table-schema-requirements) below)
-- The table is typically populated by landing HL7 files onto **Databricks Volumes** and loading them into a Bronze table
+- The table is typically populated by landing HL7 files onto **Databricks Volumes** and loading them into a Bronze table using Autoloader.
 
 ## Setup
 
@@ -75,17 +75,17 @@ A typical HL7 v2 message is just the raw pipe-delimited text (e.g., `MSH|^~\&|Se
 
 **Example: Creating the Bronze table from Volume files**
 
-If your HL7 v2 messages are landing as text files on a Databricks Volume, you can create the required Bronze table like this. Each file must become **one row** containing the complete multi-segment message, so use `format => 'binaryFile'` (not `'text'`, which splits into one row per line):
+If your HL7 v2 messages are landing as text files on a Databricks Volume, you can create the required Bronze table like this:
 
 ```sql
-CREATE TABLE my_catalog.bronze.hl7_raw AS
+CREATE TABLE my_catalog.my_schema.hl7_raw AS
 SELECT
-  string(content)      AS data,
-  modificationTime     AS sendTime,
-  path                 AS name
+  value                            AS data,
+  _metadata.file_modification_time AS sendTime,
+  _metadata.file_name              AS name
 FROM read_files(
   '/Volumes/my_catalog/my_schema/hl7_volume/',
-  format => 'binaryFile'
+  format => 'text'
 );
 ```
 
@@ -101,11 +101,74 @@ The following options can be set per table via `table_configuration`. These appl
 | `window_seconds` | string | `86400` | Duration in seconds of the sliding time window used for incremental reads. Smaller values produce smaller, faster batches. |
 | `start_timestamp` | string | *(auto-discovered)* | RFC 3339 timestamp to start reading from when no prior offset exists (e.g., `2024-01-01T00:00:00Z`). If omitted, the connector auto-discovers the oldest message. |
 
-To use table-level options, include them in the `externalOptionsAllowList` connection parameter:
+#### Understanding `externalOptionsAllowList`
+
+To use the table-level options above, the UC connection must include them in the `externalOptionsAllowList` parameter:
 
 ```
 segment_type,window_seconds,start_timestamp
 ```
+
+`externalOptionsAllowList` is a **Unity Catalog connection-level security gate**. It controls which option keys the Lakeflow framework is allowed to pass from your pipeline spec's `table_configuration` through to the connector code. It does **not** restrict which segment types or tables you can ingest.
+
+- If a key (e.g. `window_seconds`) is listed in `externalOptionsAllowList`, the framework passes its value to the connector.
+- If a key is **not** listed, the framework **silently drops** it — the connector never receives it and falls back to its default.
+
+The allowlist exists to prevent arbitrary options from being injected into connector code. For this connector, the three allowed keys are `segment_type`, `window_seconds`, and `start_timestamp`.
+
+#### Understanding `window_seconds`
+
+The connector uses a **sliding time window** to bound each micro-batch during incremental ingestion. `window_seconds` controls the size of that window — i.e., how much time each batch covers.
+
+```
+window_seconds = 86400 (1 day, default):
+
+  Run 1:  [--Jan 1--]                         → fetches 1 day of messages
+  Run 2:             [--Jan 2--]               → next 1-day window
+  Run 3:                        [--Jan 3--]    → next 1-day window
+
+window_seconds = 3600 (1 hour):
+
+  Run 1:  [-1hr-]                              → fetches 1 hour of messages
+  Run 2:        [-1hr-]                        → next 1-hour window
+  ...  (24 runs to cover 1 day)
+```
+
+The connector automatically advances the cursor forward after each successful batch and checkpoints between pipeline runs.
+
+**When to adjust:**
+
+| Scenario | Recommended `window_seconds` | Why |
+|---|---|---|
+| High-volume source (thousands of messages/day) | `3600` (1 hour) | Keeps each batch small to avoid memory or API rate limits |
+| Low-volume source (a few messages/day) | `86400` (1 day, default) | Covers a full day per batch, catches up quickly |
+| Testing | `60` (1 minute) | Processes tiny batches to verify the pipeline works |
+
+#### Understanding `segment_type`
+
+By default, the `source_table` name maps directly to the HL7 segment type — `source_table: "pid"` extracts `PID` segments, `source_table: "obx"` extracts `OBX` segments, and so on. **For all 21 standard segment types, you never need to set `segment_type`.**
+
+The `segment_type` option exists for **custom Z-segments**. HL7 v2 allows hospitals and vendors to define site-specific segments prefixed with "Z" (e.g. `ZPD`, `ZLB`, `ZIN`). These are not part of the HL7 standard and don't have pre-defined table entries in the connector.
+
+To ingest a Z-segment, choose any table name and use `segment_type` to point it at the custom segment:
+
+```json
+{
+    "table": {
+        "source_table": "custom_patient_demographics",
+        "table_configuration": {
+            "segment_type": "ZPD"
+        }
+    }
+}
+```
+
+This creates a destination table called `custom_patient_demographics` that extracts all `ZPD` segments. Since Z-segments are non-standard, the connector outputs a generic schema with columns `field_1` through `field_25` plus the standard metadata columns (`message_id`, `send_time`, etc.).
+
+| Scenario | `source_table` | `segment_type` needed? |
+|---|---|---|
+| Standard segment (PID, OBX, MSH, ...) | `pid`, `obx`, `msh` | No — auto-matched from table name |
+| Custom Z-segment | Any name you choose | Yes — set to the Z-segment prefix (e.g. `ZPD`) |
 
 ### Obtaining Delta Mode Connection Parameters
 
@@ -220,7 +283,7 @@ Arbitrary Z-segments (site-specific custom segments) can be ingested by setting 
 
 ### Incremental Ingestion
 
-All tables use **append-only** incremental ingestion:
+All tables use **append-only** incremental ingestion. This reflects how HL7 v2 works as a protocol — it is a messaging standard, not a database protocol. Every message is an immutable event (e.g., "patient admitted", "address changed", "lab result received"). Source systems like the GCP Healthcare API HL7v2 store and integration engines store each message independently and never overwrite prior messages. The connector mirrors this behavior — if the same patient has multiple messages, each one becomes a separate row.
 
 - New messages are tracked by the `sendTime` timestamp (stored as the `send_time` column). In GCP mode this comes from the Healthcare API; in Delta mode it comes from the `sendTime` column of your Bronze table.
 - The connector uses a **sliding time window** to bound each micro-batch, advancing the cursor forward with each run.
@@ -252,16 +315,6 @@ These are set directly under each `table` object in the pipeline spec:
 | `destination_catalog` | No | Target catalog (defaults to pipeline's default) |
 | `destination_schema` | No | Target schema (defaults to pipeline's default) |
 | `destination_table` | No | Target table name (defaults to `source_table`) |
-
-### Common `table_configuration` options
-
-These are set inside the `table_configuration` map alongside any source-specific options:
-
-| Option | Required | Description |
-|---|---|---|
-| `scd_type` | No | `SCD_TYPE_1` (default) or `SCD_TYPE_2`. Only applicable to tables with CDC or SNAPSHOT ingestion mode; APPEND_ONLY tables do not support this option. |
-| `primary_keys` | No | List of columns to override the connector's default primary keys |
-| `sequence_by` | No | Column used to order records for SCD Type 2 change tracking |
 
 ### Source-Specific `table_configuration` options
 

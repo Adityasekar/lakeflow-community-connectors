@@ -1,20 +1,10 @@
 # HL7 v2 Connector — UI Setup Guide
 
-This guide walks through creating HL7 v2 ingestion pipelines via the Databricks UI using the **Custom Connector** flow. Since the HL7 v2 connector is not yet published to the main repository, you point the UI at your own fork.
+This guide walks through creating HL7 v2 ingestion pipelines via the Databricks UI using the **Custom Connector** flow. Since the HL7 v2 connector is not yet published to the main repository, you point the UI to the fork mentioned below.
 
 Both GCP and Delta modes use the same source code and Git repo — the only difference is which connection (and credentials) the pipeline uses.
 
----
-
-## Prerequisite: Code Is Pushed to Your Fork
-
-Your HL7 v2 connector code must be pushed to your fork:
-
-```
-https://github.com/Adityasekar/lakeflow-community-connectors
-```
-
-The source name is `hl7_v2` (matching the directory name under `sources/`).
+For prerequisites, supported tables, per-table configuration options, and connection parameter details, see the [HL7 v2 Connector README](README.md).
 
 ---
 
@@ -60,14 +50,13 @@ The source name is `hl7_v2` (matching the directory name under `sources/`).
 
 #### When to add `externalOptionsAllowList`
 
-The `externalOptionsAllowList` lets you pass per-table configuration options (like `window_seconds`, `segment_type`, `start_timestamp`) through the pipeline spec to the connector. Without it, those options are silently ignored.
+If the UI shows only generic key-value pairs (i.e., it couldn't load the spec from your repo), you must add `externalOptionsAllowList` as an explicit key-value entry:
+- **Key**: `externalOptionsAllowList`
+- **Value**: `segment_type,window_seconds,start_timestamp`
 
-- **If the UI shows the structured form** (with labeled fields from `connector_spec.yaml`): The `externalOptionsAllowList` is typically handled automatically by the framework. You should **not** need to add it manually.
-- **If the UI shows only generic key-value pairs** (i.e., it couldn't load the spec from your repo — this can happen if the branch name doesn't match, or the repo is private): You must add it as an explicit key-value entry:
-  - **Key**: `externalOptionsAllowList`
-  - **Value**: `segment_type,window_seconds,start_timestamp`
+If the UI shows the structured form (with labeled fields from `connector_spec.yaml`), it is typically handled automatically.
 
-> **Rule of thumb**: If you plan to use `window_seconds`, `start_timestamp`, or `segment_type` in any of your table configurations, make sure `externalOptionsAllowList` is set on the connection. If in doubt, add it — it does no harm.
+> For a detailed explanation of what `externalOptionsAllowList` does and how each table-level option works, see the [HL7 v2 Connector README — Table-Level Options](README.md#table-level-options).
 
 6. Click **Next** to create the connection
 
@@ -88,7 +77,7 @@ Once created, you'll be redirected to the pipeline details page.
 
 1. Click **Open in Editor** to edit the auto-generated `ingest.py`
 2. The auto-generated skeleton won't have your table configuration — **you must replace it** with the actual pipeline spec
-3. Paste the following, adjusting `connection_name`, catalog, schema, and tables as needed:
+3. Paste the following, adjusting `connection_name` and tables as needed (see [HL7 v2 Connector README — Supported Objects](README.md#supported-objects) for the full list of segment types):
 
 ```python
 from databricks.labs.community_connector.pipeline import ingest
@@ -164,25 +153,17 @@ If you haven't added it yet, follow Step 1 from the GCP section above (same sour
 
 1. Under "Connection to the source", click **Create connection**
 2. Name it, e.g. `hl7_v2_delta_connection`
-3. Fill in the parameters:
+3. Fill in the parameters (see [HL7 v2 Connector README — Delta Mode Connection Parameters](README.md#delta-mode-connection-parameters) for where to find each value):
 
-| Parameter | Value to enter | Where to find it |
-|---|---|---|
-| `source_type` | `delta` (**required** — this switches the connector to Delta mode) | N/A — just type `delta` |
-| `delta_table_name` | Fully-qualified 3-level name (e.g. `my_catalog.bronze.hl7_raw`) | The catalog, schema, and table name of your Bronze table in Unity Catalog |
-| `databricks_host` | Your workspace URL (e.g. `https://my-workspace.cloud.databricks.com`) | Your browser address bar when logged into the workspace, or **Settings > Workspace details** |
-| `databricks_token` | A Databricks personal access token (starts with `dapi...`) | **Settings > Developer > Access tokens** → **Generate new token** → copy the generated token |
-| `sql_warehouse_id` | SQL warehouse ID (e.g. `01370556fad60fda`) | **SQL Warehouses** → click your warehouse → **Connection details** tab, or from the URL: `.../sql/warehouses/<warehouse_id>` |
+| Parameter | Value to enter |
+|---|---|
+| `source_type` | `delta` (**required** — this switches the connector to Delta mode) |
+| `delta_table_name` | Fully-qualified 3-level name (e.g. `my_catalog.bronze.hl7_raw`) |
+| `databricks_host` | Your workspace URL (e.g. `https://my-workspace.cloud.databricks.com`) |
+| `databricks_token` | A Databricks personal access token (starts with `dapi...`) |
+| `sql_warehouse_id` | SQL warehouse ID (e.g. `01370556fad60fda`) |
 
-> **Why are Databricks credentials needed?** The Lakeflow Connect pipeline framework runs connector code in a subprocess where SparkSession is unavailable. To read the Delta table, the connector queries it via the SQL Statement Execution REST API, which requires explicit workspace credentials.
-
-> **Tip**: Use a **serverless SQL warehouse** for cost efficiency — it scales to zero when idle.
-
-#### When to add `externalOptionsAllowList`
-
-Same rule as GCP mode:
-- If the UI shows only generic key-value pairs, add: Key = `externalOptionsAllowList`, Value = `segment_type,window_seconds,start_timestamp`
-- If the structured form loaded from `connector_spec.yaml`, it's handled automatically
+> If the UI shows only generic key-value pairs, also add `externalOptionsAllowList` = `segment_type,window_seconds,start_timestamp`. See [above](#when-to-add-externaloptionsallowlist).
 
 4. Click **Next** to create the connection
 
@@ -258,64 +239,9 @@ Click **Start** on the pipeline page.
 
 ---
 
-## Delta Mode Prerequisite: Bronze Table
-
-Before creating the Delta pipeline, your Bronze Delta table must exist with these columns:
-
-| Column | Type | Required | Description |
-|---|---|---|---|
-| `data` | STRING | Yes | Raw HL7 v2 pipe-delimited message text |
-| `sendTime` | STRING or TIMESTAMP | Yes | Timestamp used as the incremental cursor |
-| `name` | STRING | No | Source identifier for traceability |
-
-If loading from files on a Databricks Volume:
-
-```sql
-CREATE TABLE my_catalog.bronze.hl7_raw AS
-SELECT
-  string(content)      AS data,
-  modificationTime     AS sendTime,
-  path                 AS name
-FROM read_files(
-  '/Volumes/my_catalog/my_schema/hl7_volume/',
-  format => 'binaryFile'
-);
-```
-
----
-
-## Supported Tables (Segment Types)
-
-Both modes support the same tables. Start small with a few key segments:
-
-| Table | Segment | Description |
-|---|---|---|
-| `msh` | MSH | Message Header — one row per HL7 message |
-| `pid` | PID | Patient Identification — demographics |
-| `pv1` | PV1 | Patient Visit — encounter/admission data |
-| `obx` | OBX | Observation Result — lab results |
-| `obr` | OBR | Observation Request — lab/radiology orders |
-
-See the [main README](README.md) for the full list of 21+ segment types.
-
----
-
-## Per-Table Configuration Options
-
-These go inside `table_configuration` for each table in the pipeline spec:
-
-| Option | Default | Description |
-|---|---|---|
-| `window_seconds` | `86400` (1 day) | Sliding window duration in seconds. Use `3600` for high-volume, `60` for testing. |
-| `start_timestamp` | Auto-discovered | RFC 3339 timestamp to start reading from (e.g. `2024-01-01T00:00:00Z`). If omitted, auto-discovers the oldest message. |
-| `segment_type` | Same as table name | Override to ingest custom Z-segments (e.g. set to `ZPD`). |
-
----
-
 ## Key Points
 
 - **Both pipelines use the same Custom Connector** (same Git repo and source name `hl7_v2`). The connection credentials determine GCP vs Delta mode.
 - **The Custom Connector only needs to be added once** — after that, `hl7_v2` stays in your Community connectors list for future pipelines.
 - **The `ingest.py` replacement is critical** — the auto-generated skeleton won't work without your pipeline spec.
-- **Start small** with `msh`, `pid`, `pv1`, `obx`, `obr` and add more once you confirm data flows correctly.
-- **Join across tables** using the `message_id` column to link patients to lab results, diagnoses, etc.
+- For supported tables, per-table configuration options, prerequisites, and troubleshooting, see the [HL7 v2 Connector README](README.md).
