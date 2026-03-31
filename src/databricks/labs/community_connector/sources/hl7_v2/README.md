@@ -419,6 +419,10 @@ Follow the Lakeflow Community Connector UI, which will guide you through setting
 - **Out of Memory / Large Tables**: The default `delta_query_mode=preload` loads the entire table into memory at connector init. If your Bronze table has hundreds of thousands of rows or more, set `delta_query_mode` to `per_window` in the connection parameters. This issues a scoped SQL query per micro-batch instead, with no memory overhead.
 
 
+## Sample Data Attribution
+
+The HL7 v2 sample messages used for testing (under `tests/unit/sources/hl7_v2/samples/`) include real-world messages adapted from the [CDCgov/lib-hl7v2-bumblebee](https://github.com/CDCgov/lib-hl7v2-bumblebee) repository, published by the U.S. Centers for Disease Control and Prevention (CDC). That repository is licensed under the **Apache License 2.0** ([LICENSE](https://github.com/CDCgov/lib-hl7v2-bumblebee/blob/main/LICENSE)). The sample files sourced from this repository cover public health lab reporting scenarios including COVID-19 PCR results, influenza panels, Lyme disease case notifications, antimicrobial resistance testing, and carbapenem-resistant organism surveillance. Additional synthetic sample messages were created to cover the remaining segment types (PD1, PV2, MRG, IAM, PR1, IN1, GT1, FT1, RXA, SCH, TXA) not present in the CDC test corpus.
+
 ## References
 
 - [Google Cloud Healthcare API — HL7v2 Concepts](https://cloud.google.com/healthcare-api/docs/concepts/hl7v2)
