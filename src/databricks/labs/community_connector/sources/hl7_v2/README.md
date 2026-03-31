@@ -65,9 +65,12 @@ SELECT
   _metadata.file_name              AS name
 FROM read_files(
   '/Volumes/my_catalog/my_schema/hl7_volume/',
-  format => 'text'
+  format => 'text',
+  wholeText => true
 );
 ```
+
+> **Important:** `wholeText => true` is required. Without it, `read_files` splits each line into a separate row. HL7 messages are multi-line (one line per segment), so the entire file must be read as a single row for the connector to parse all segments.
 
 ## Table-Level Options
 
