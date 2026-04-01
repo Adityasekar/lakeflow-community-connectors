@@ -159,6 +159,38 @@ class HL7Segment:
         decoded = _decode_escape(parts[comp_n - 1], self._enc)
         return decoded if decoded else default
 
+    def get_sub_component(
+        self, field_n: int, comp_n: int, sub_n: int, default: str = ""
+    ) -> str:
+        """Return sub-component *sub_n* (1-based) of component *comp_n* of field *field_n*.
+
+        Sub-components are separated by ``&`` (e.g. HD inside CX.4).
+        """
+        comp = self.get_component(field_n, comp_n)
+        if not comp:
+            return default
+        parts = comp.split(self._enc.sub_comp_sep)
+        if sub_n < 1 or sub_n > len(parts):
+            return default
+        decoded = _decode_escape(parts[sub_n - 1], self._enc)
+        return decoded if decoded else default
+
+    def get_rep_sub_component(
+        self, field_n: int, rep_n: int, comp_n: int, sub_n: int, default: str = ""
+    ) -> str:
+        """Return sub-component *sub_n* of component *comp_n* from repetition *rep_n* of field *field_n*.
+
+        All indices are 1-based.
+        """
+        comp = self.get_rep_component(field_n, rep_n, comp_n)
+        if not comp:
+            return default
+        parts = comp.split(self._enc.sub_comp_sep)
+        if sub_n < 1 or sub_n > len(parts):
+            return default
+        decoded = _decode_escape(parts[sub_n - 1], self._enc)
+        return decoded if decoded else default
+
     def num_fields(self) -> int:
         """Number of data fields in this segment (excludes the segment name at index 0)."""
         return max(0, len(self._fields) - 1)

@@ -178,7 +178,7 @@ All HL7 v2 fields are stored as `STRING`. The connector extracts **all** compone
 | NM, SI | Numeric strings | STRING | Cast with `CAST(col AS INT)` as needed |
 | TS, DT, TM | Timestamps, dates, times | STRING | HL7 DTM format; datetime fields like `date_of_birth` are parsed to `TIMESTAMP` |
 | CE, CWE, CNE | Coded elements | STRING | All 6 components: `code`, `text`, `coding_system`, `alt_code`, `alt_text`, `alt_coding_system` |
-| XPN | Person name | STRING | Components: `family_name`, `given_name`, `middle_name`, `suffix`, `prefix` |
+| XPN | Person name | STRING | ALL 14 active components via `_xpn_fields()` helper: `family_name` (1), `given_name` (2), `middle_name` (3), `suffix` (4), `prefix` (5), `degree` (6), `name_type_code` (7), `name_representation_code` (8), `name_context` (9), `name_assembly_order` (11), `name_effective_date` (12), `name_expiration_date` (13), `professional_suffix` (14), `called_by` (15). |
 | XAD | Address | STRING | Components: `street`, `other_designation`, `city`, `state`, `zip`, `country`, `type` |
 | XCN | Composite ID/name | STRING | Components: `id`, `family_name`, `given_name`, `prefix` |
 | XON | Organization name | STRING | All 10 components: `name`, `type_code`, `id`, `check_digit`, `check_digit_scheme`, `assigning_authority`, `id_type_code`, `assigning_facility`, `name_rep_code`, `identifier` |
@@ -190,7 +190,7 @@ All HL7 v2 fields are stored as `STRING`. The connector extracts **all** compone
 **Key rules for composite type extraction:**
 - Every component of a composite type gets its own column — do not extract only component 1 and discard the rest.
 - For repeating fields (separated by `~`), use `get_rep_component` (not `get_component`) to avoid the repetition separator bleeding into component values. Only the first repetition is captured; the full value is in `raw_segment`.
-- Sub-components within components (separated by `&`, e.g., HD inside XON) are stored as the raw string. Users can split on `&` downstream if needed.
+- When a component is itself a composite type (e.g., HD inside CX.4 or XON.6), its sub-components (separated by `&`) are also extracted into individual columns using `get_sub_component`. The raw component value is preserved as well.
 
 `set_id` is stored as `BIGINT`. Datetime fields parsed from HL7 DTM format are stored as `TIMESTAMP`.
 

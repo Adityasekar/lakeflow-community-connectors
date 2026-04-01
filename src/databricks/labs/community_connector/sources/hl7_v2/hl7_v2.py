@@ -114,6 +114,42 @@ def _parse_dtm(s: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# XPN (Extended Person Name) helper — extracts all 15 components
+# ---------------------------------------------------------------------------
+
+
+def _xpn_fields(
+    seg: HL7Segment, field_n: int, prefix: str, *, repeating: bool = True
+) -> dict:
+    """Extract all XPN components for *field_n* with column names prefixed by *prefix*.
+
+    Set ``repeating=False`` for non-repeating XPN fields (uses get_component
+    instead of get_rep_component).
+    """
+    if repeating:
+        gc = lambda comp: _v(seg.get_rep_component(field_n, 1, comp))
+    else:
+        gc = lambda comp: _v(seg.get_component(field_n, comp))
+
+    return {
+        f"{prefix}_family_name": gc(1),
+        f"{prefix}_given_name": gc(2),
+        f"{prefix}_middle_name": gc(3),
+        f"{prefix}_suffix": gc(4),
+        f"{prefix}_prefix": gc(5),
+        f"{prefix}_degree": gc(6),
+        f"{prefix}_name_type_code": gc(7),
+        f"{prefix}_name_representation_code": gc(8),
+        f"{prefix}_name_context": gc(9),
+        f"{prefix}_name_assembly_order": gc(11),
+        f"{prefix}_name_effective_date": gc(12),
+        f"{prefix}_name_expiration_date": gc(13),
+        f"{prefix}_professional_suffix": gc(14),
+        f"{prefix}_called_by": gc(15),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Metadata builder (from MSH segment, added to every row)
 # ---------------------------------------------------------------------------
 
@@ -183,8 +219,12 @@ def _extract_msh(seg: HL7Segment) -> dict:
         "sending_responsible_org_check_digit": _v(seg.get_component(22, 4)),
         "sending_responsible_org_check_digit_scheme": _v(seg.get_component(22, 5)),
         "sending_responsible_org_assigning_authority": _v(seg.get_component(22, 6)),
+        "sending_responsible_org_assigning_authority_universal_id": _v(seg.get_sub_component(22, 6, 2)),
+        "sending_responsible_org_assigning_authority_universal_id_type": _v(seg.get_sub_component(22, 6, 3)),
         "sending_responsible_org_id_type_code": _v(seg.get_component(22, 7)),
         "sending_responsible_org_assigning_facility": _v(seg.get_component(22, 8)),
+        "sending_responsible_org_assigning_facility_universal_id": _v(seg.get_sub_component(22, 8, 2)),
+        "sending_responsible_org_assigning_facility_universal_id_type": _v(seg.get_sub_component(22, 8, 3)),
         "sending_responsible_org_name_rep_code": _v(seg.get_component(22, 9)),
         "sending_responsible_org_identifier": _v(seg.get_component(22, 10)),
         "receiving_responsible_org": _v(seg.get_component(23, 1)),
@@ -193,8 +233,12 @@ def _extract_msh(seg: HL7Segment) -> dict:
         "receiving_responsible_org_check_digit": _v(seg.get_component(23, 4)),
         "receiving_responsible_org_check_digit_scheme": _v(seg.get_component(23, 5)),
         "receiving_responsible_org_assigning_authority": _v(seg.get_component(23, 6)),
+        "receiving_responsible_org_assigning_authority_universal_id": _v(seg.get_sub_component(23, 6, 2)),
+        "receiving_responsible_org_assigning_authority_universal_id_type": _v(seg.get_sub_component(23, 6, 3)),
         "receiving_responsible_org_id_type_code": _v(seg.get_component(23, 7)),
         "receiving_responsible_org_assigning_facility": _v(seg.get_component(23, 8)),
+        "receiving_responsible_org_assigning_facility_universal_id": _v(seg.get_sub_component(23, 8, 2)),
+        "receiving_responsible_org_assigning_facility_universal_id_type": _v(seg.get_sub_component(23, 8, 3)),
         "receiving_responsible_org_name_rep_code": _v(seg.get_component(23, 9)),
         "receiving_responsible_org_identifier": _v(seg.get_component(23, 10)),
         "sending_network_address": _v(seg.get_component(24, 1)),
@@ -228,17 +272,14 @@ def _extract_pid(seg: HL7Segment) -> dict:
         "patient_id_check_digit": _v(seg.get_rep_component(3, 1, 2)),
         "patient_id_check_digit_scheme": _v(seg.get_rep_component(3, 1, 3)),
         "patient_id_assigning_authority": _v(seg.get_rep_component(3, 1, 4)),
+        "patient_id_assigning_authority_universal_id": _v(seg.get_rep_sub_component(3, 1, 4, 2)),
+        "patient_id_assigning_authority_universal_id_type": _v(seg.get_rep_sub_component(3, 1, 4, 3)),
         "patient_id_type_code": _v(seg.get_rep_component(3, 1, 5)),
         "alternate_patient_id": _v(seg.get_first_repetition(4)),
         "patient_name": _v(seg.get_first_repetition(5)),
-        "patient_family_name": _v(seg.get_rep_component(5, 1, 1)),
-        "patient_given_name": _v(seg.get_rep_component(5, 1, 2)),
-        "patient_middle_name": _v(seg.get_rep_component(5, 1, 3)),
-        "patient_name_suffix": _v(seg.get_rep_component(5, 1, 5)),
-        "patient_name_prefix": _v(seg.get_rep_component(5, 1, 6)),
-        "mothers_maiden_name": _v(seg.get_rep_component(6, 1, 1)),
-        "mothers_maiden_given_name": _v(seg.get_rep_component(6, 1, 2)),
-        "mothers_maiden_middle_name": _v(seg.get_rep_component(6, 1, 3)),
+        **_xpn_fields(seg, 5, "patient_name"),
+        "mothers_maiden_name": _v(seg.get_first_repetition(6)),
+        **_xpn_fields(seg, 6, "mothers_maiden"),
         "date_of_birth": _parse_dtm(seg.get_field(7)),
         "administrative_sex": _v(seg.get_field(8)),
         "patient_alias": _v(seg.get_first_repetition(9)),
@@ -280,12 +321,16 @@ def _extract_pid(seg: HL7Segment) -> dict:
         "patient_account_number": _v(seg.get_component(18, 1)),
         "patient_account_check_digit": _v(seg.get_component(18, 2)),
         "patient_account_assigning_authority": _v(seg.get_component(18, 4)),
+        "patient_account_assigning_authority_universal_id": _v(seg.get_sub_component(18, 4, 2)),
+        "patient_account_assigning_authority_universal_id_type": _v(seg.get_sub_component(18, 4, 3)),
         "patient_account_type_code": _v(seg.get_component(18, 5)),
         "ssn": _v(seg.get_field(19)),
         "drivers_license": _v(seg.get_field(20)),
         "mothers_identifier": _v(seg.get_rep_component(21, 1, 1)),
         "mothers_id_check_digit": _v(seg.get_rep_component(21, 1, 2)),
         "mothers_id_assigning_authority": _v(seg.get_rep_component(21, 1, 4)),
+        "mothers_id_assigning_authority_universal_id": _v(seg.get_rep_sub_component(21, 1, 4, 2)),
+        "mothers_id_assigning_authority_universal_id_type": _v(seg.get_rep_sub_component(21, 1, 4, 3)),
         "mothers_id_type_code": _v(seg.get_rep_component(21, 1, 5)),
         "ethnic_group": _v(seg.get_rep_component(22, 1, 1)),
         "ethnic_group_text": _v(seg.get_rep_component(22, 1, 2)),
@@ -548,6 +593,8 @@ def _extract_obr(seg: HL7Segment) -> dict:
         "alternate_placer_order_number_obr": _v(seg.get_component(53, 1)),
         "alternate_placer_order_check_digit": _v(seg.get_component(53, 2)),
         "alternate_placer_order_assigning_authority": _v(seg.get_component(53, 4)),
+        "alternate_placer_order_assigning_authority_universal_id": _v(seg.get_sub_component(53, 4, 2)),
+        "alternate_placer_order_assigning_authority_universal_id_type": _v(seg.get_sub_component(53, 4, 3)),
         "alternate_placer_order_type_code": _v(seg.get_component(53, 5)),
         "parent_order": _v(seg.get_component(54, 1)),
         "obr_action_code": _v(seg.get_field(55)),
@@ -631,8 +678,12 @@ def _extract_obx(seg: HL7Segment) -> dict:
         "performing_organization_check_digit": _v(seg.get_component(23, 4)),
         "performing_organization_check_digit_scheme": _v(seg.get_component(23, 5)),
         "performing_organization_assigning_authority": _v(seg.get_component(23, 6)),
+        "performing_organization_assigning_authority_universal_id": _v(seg.get_sub_component(23, 6, 2)),
+        "performing_organization_assigning_authority_universal_id_type": _v(seg.get_sub_component(23, 6, 3)),
         "performing_organization_id_type_code": _v(seg.get_component(23, 7)),
         "performing_organization_assigning_facility": _v(seg.get_component(23, 8)),
+        "performing_organization_assigning_facility_universal_id": _v(seg.get_sub_component(23, 8, 2)),
+        "performing_organization_assigning_facility_universal_id_type": _v(seg.get_sub_component(23, 8, 3)),
         "performing_organization_name_rep_code": _v(seg.get_component(23, 9)),
         "performing_organization_identifier": _v(seg.get_component(23, 10)),
         "performing_organization_address": _v(seg.get_field(24)),
@@ -722,9 +773,7 @@ def _extract_nk1(seg: HL7Segment) -> dict:
     return {
         "set_id": _i(seg.get_field(1)) or 1,
         "name": _v(seg.get_first_repetition(2)),
-        "nk_family_name": _v(seg.get_rep_component(2, 1, 1)),
-        "nk_given_name": _v(seg.get_rep_component(2, 1, 2)),
-        "nk_middle_name": _v(seg.get_rep_component(2, 1, 3)),
+        **_xpn_fields(seg, 2, "nk"),
         "relationship": _v(seg.get_field(3)),
         "relationship_code": _v(seg.get_component(3, 1)),
         "relationship_text": _v(seg.get_component(3, 2)),
@@ -750,11 +799,13 @@ def _extract_nk1(seg: HL7Segment) -> dict:
         "protection_indicator": _v(seg.get_field(23)),
         "student_indicator": _v(seg.get_field(24)),
         "religion": _v(seg.get_component(25, 1)),
-        "mothers_maiden_name": _v(seg.get_rep_component(26, 1, 1)),
+        "mothers_maiden_name": _v(seg.get_first_repetition(26)),
+        **_xpn_fields(seg, 26, "mothers_maiden"),
         "nationality": _v(seg.get_component(27, 1)),
         "ethnic_group": _v(seg.get_rep_component(28, 1, 1)),
         "contact_reason": _v(seg.get_rep_component(29, 1, 1)),
-        "contact_person_name": _v(seg.get_rep_component(30, 1, 1)),
+        "contact_person_name": _v(seg.get_first_repetition(30)),
+        **_xpn_fields(seg, 30, "contact_person"),
         "contact_person_telephone": _v(seg.get_first_repetition(31)),
         "contact_persons_address": _v(seg.get_first_repetition(32)),
         "associated_party_identifiers": _v(seg.get_rep_component(33, 1, 1)),
@@ -874,8 +925,7 @@ def _extract_mrg(seg: HL7Segment) -> dict:
         "prior_visit_number": _v(seg.get_component(5, 1)),
         "prior_alternate_visit_id": _v(seg.get_component(6, 1)),
         "prior_patient_name": _v(seg.get_first_repetition(7)),
-        "prior_patient_family_name": _v(seg.get_rep_component(7, 1, 1)),
-        "prior_patient_given_name": _v(seg.get_rep_component(7, 1, 2)),
+        **_xpn_fields(seg, 7, "prior_patient"),
     }
 
 
@@ -899,8 +949,7 @@ def _extract_iam(seg: HL7Segment) -> dict:
         "onset_date_text": _v(seg.get_field(12)),
         "reported_datetime": _parse_dtm(seg.get_field(13)),
         "reported_by": _v(seg.get_first_repetition(14)),
-        "reported_by_family_name": _v(seg.get_rep_component(14, 1, 1)),
-        "reported_by_given_name": _v(seg.get_rep_component(14, 1, 2)),
+        **_xpn_fields(seg, 14, "reported_by"),
         "relationship_to_patient_code": _v(seg.get_component(15, 1)),
         "alert_device_code": _v(seg.get_component(16, 1)),
         "allergy_clinical_status_code": _v(seg.get_component(17, 1)),
@@ -1063,7 +1112,8 @@ def _extract_in1(seg: HL7Segment) -> dict:
         "insurance_company_id": _v(seg.get_rep_component(3, 1, 1)),
         "insurance_company_name": _v(seg.get_rep_component(4, 1, 1)),
         "insurance_company_address": _v(seg.get_first_repetition(5)),
-        "insurance_co_contact_person": _v(seg.get_rep_component(6, 1, 1)),
+        "insurance_co_contact_person": _v(seg.get_first_repetition(6)),
+        **_xpn_fields(seg, 6, "insurance_co_contact"),
         "insurance_co_phone_number": _v(seg.get_first_repetition(7)),
         "group_number": _v(seg.get_field(8)),
         "group_name": _v(seg.get_rep_component(9, 1, 1)),
@@ -1074,8 +1124,7 @@ def _extract_in1(seg: HL7Segment) -> dict:
         "authorization_information": _v(seg.get_component(14, 1)),
         "plan_type": _v(seg.get_field(15)),
         "name_of_insured": _v(seg.get_first_repetition(16)),
-        "name_of_insured_family": _v(seg.get_rep_component(16, 1, 1)),
-        "name_of_insured_given": _v(seg.get_rep_component(16, 1, 2)),
+        **_xpn_fields(seg, 16, "insured"),
         "insureds_relationship_to_patient": _v(seg.get_component(17, 1)),
         "insureds_date_of_birth": _parse_dtm(seg.get_field(18)),
         "insureds_address": _v(seg.get_first_repetition(19)),
@@ -1123,9 +1172,9 @@ def _extract_gt1(seg: HL7Segment) -> dict:
         "set_id": _i(seg.get_field(1)) or 1,
         "guarantor_number": _v(seg.get_rep_component(2, 1, 1)),
         "guarantor_name": _v(seg.get_first_repetition(3)),
-        "guarantor_family_name": _v(seg.get_rep_component(3, 1, 1)),
-        "guarantor_given_name": _v(seg.get_rep_component(3, 1, 2)),
-        "guarantor_spouse_name": _v(seg.get_rep_component(4, 1, 1)),
+        **_xpn_fields(seg, 3, "guarantor"),
+        "guarantor_spouse_name": _v(seg.get_first_repetition(4)),
+        **_xpn_fields(seg, 4, "guarantor_spouse"),
         "guarantor_address": _v(seg.get_first_repetition(5)),
         "guarantor_ph_num_home": _v(seg.get_first_repetition(6)),
         "guarantor_ph_num_business": _v(seg.get_first_repetition(7)),
@@ -1137,7 +1186,8 @@ def _extract_gt1(seg: HL7Segment) -> dict:
         "guarantor_date_begin": _v(seg.get_field(13)),
         "guarantor_date_end": _v(seg.get_field(14)),
         "guarantor_priority": _i(seg.get_field(15)),
-        "guarantor_employer_name": _v(seg.get_rep_component(16, 1, 1)),
+        "guarantor_employer_name": _v(seg.get_first_repetition(16)),
+        **_xpn_fields(seg, 16, "guarantor_employer"),
         "guarantor_employer_address": _v(seg.get_first_repetition(17)),
         "guarantor_employer_phone_number": _v(seg.get_first_repetition(18)),
         "guarantor_employee_id_number": _v(seg.get_rep_component(19, 1, 1)),
@@ -1163,10 +1213,12 @@ def _extract_gt1(seg: HL7Segment) -> dict:
         "protection_indicator": _v(seg.get_field(39)),
         "student_indicator": _v(seg.get_field(40)),
         "religion": _v(seg.get_component(41, 1)),
-        "mothers_maiden_name": _v(seg.get_rep_component(42, 1, 1)),
+        "mothers_maiden_name": _v(seg.get_first_repetition(42)),
+        **_xpn_fields(seg, 42, "gt1_mothers_maiden"),
         "nationality": _v(seg.get_component(43, 1)),
         "ethnic_group": _v(seg.get_rep_component(44, 1, 1)),
-        "contact_persons_name": _v(seg.get_rep_component(45, 1, 1)),
+        "contact_persons_name": _v(seg.get_first_repetition(45)),
+        **_xpn_fields(seg, 45, "gt1_contact_person"),
         "contact_persons_telephone_number": _v(seg.get_first_repetition(46)),
         "contact_reason": _v(seg.get_component(47, 1)),
         "contact_relationship": _v(seg.get_field(48)),

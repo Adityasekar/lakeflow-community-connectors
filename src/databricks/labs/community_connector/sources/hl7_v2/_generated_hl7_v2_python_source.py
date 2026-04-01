@@ -661,6 +661,38 @@ def register_lakeflow_source(spark):
             decoded = _decode_escape(parts[comp_n - 1], self._enc)
             return decoded if decoded else default
 
+        def get_sub_component(
+            self, field_n: int, comp_n: int, sub_n: int, default: str = ""
+        ) -> str:
+            """Return sub-component *sub_n* (1-based) of component *comp_n* of field *field_n*.
+
+            Sub-components are separated by ``&`` (e.g. HD inside CX.4).
+            """
+            comp = self.get_component(field_n, comp_n)
+            if not comp:
+                return default
+            parts = comp.split(self._enc.sub_comp_sep)
+            if sub_n < 1 or sub_n > len(parts):
+                return default
+            decoded = _decode_escape(parts[sub_n - 1], self._enc)
+            return decoded if decoded else default
+
+        def get_rep_sub_component(
+            self, field_n: int, rep_n: int, comp_n: int, sub_n: int, default: str = ""
+        ) -> str:
+            """Return sub-component *sub_n* of component *comp_n* from repetition *rep_n* of field *field_n*.
+
+            All indices are 1-based.
+            """
+            comp = self.get_rep_component(field_n, rep_n, comp_n)
+            if not comp:
+                return default
+            parts = comp.split(self._enc.sub_comp_sep)
+            if sub_n < 1 or sub_n > len(parts):
+                return default
+            decoded = _decode_escape(parts[sub_n - 1], self._enc)
+            return decoded if decoded else default
+
         def num_fields(self) -> int:
             """Number of data fields in this segment (excludes the segment name at index 0)."""
             return max(0, len(self._fields) - 1)
@@ -792,6 +824,30 @@ def register_lakeflow_source(spark):
     def _pk_i(name: str, comment: str = "") -> StructField:
         """NOT NULL LongType field used as (part of) a composite primary key."""
         return StructField(name, LongType(), nullable=False)
+
+
+    def _xpn_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
+        """Return StructFields for all XPN (Extended Person Name) components.
+
+        *prefix* is the column name prefix, *label* is a human-readable label,
+        and *field_ref* is the HL7 field reference, e.g. "PID-5".
+        """
+        return [
+            _s(f"{prefix}_family_name",              f"{label} family/last name ({field_ref}.1)"),
+            _s(f"{prefix}_given_name",               f"{label} given/first name ({field_ref}.2)"),
+            _s(f"{prefix}_middle_name",              f"{label} middle name or initial ({field_ref}.3)"),
+            _s(f"{prefix}_suffix",                   f"{label} suffix, e.g. Jr, III ({field_ref}.4)"),
+            _s(f"{prefix}_prefix",                   f"{label} prefix/title, e.g. Dr, Mr ({field_ref}.5)"),
+            _s(f"{prefix}_degree",                   f"{label} degree, e.g. MD, PhD ({field_ref}.6, deprecated)"),
+            _s(f"{prefix}_name_type_code",           f"{label} name type: L=Legal, D=Display, M=Maiden ({field_ref}.7, Table 0200)"),
+            _s(f"{prefix}_name_representation_code", f"{label} name representation: I=Ideographic, A=Alphabetic ({field_ref}.8, Table 0465)"),
+            _s(f"{prefix}_name_context",             f"{label} name context ({field_ref}.9, CWE, Table 0448)"),
+            _s(f"{prefix}_name_assembly_order",      f"{label} name assembly order: G=Given-Family, F=Family-Given ({field_ref}.11, Table 0444)"),
+            _s(f"{prefix}_name_effective_date",      f"{label} name effective date ({field_ref}.12, DTM)"),
+            _s(f"{prefix}_name_expiration_date",     f"{label} name expiration date ({field_ref}.13, DTM)"),
+            _s(f"{prefix}_professional_suffix",      f"{label} professional suffix, e.g. RN, FACS ({field_ref}.14)"),
+            _s(f"{prefix}_called_by",                f"{label} preferred name / nickname ({field_ref}.15)"),
+        ]
 
 
     # Fields present in every segment table.
@@ -970,9 +1026,13 @@ def register_lakeflow_source(spark):
             _s("sending_responsible_org_id",                           "ID number (MSH-22.3)"),
             _s("sending_responsible_org_check_digit",                  "Identifier check digit (MSH-22.4)"),
             _s("sending_responsible_org_check_digit_scheme",           "Check digit scheme (MSH-22.5)"),
-            _s("sending_responsible_org_assigning_authority",          "Assigning authority (MSH-22.6, HD)"),
+            _s("sending_responsible_org_assigning_authority",          "Assigning authority namespace ID (MSH-22.6.1, HD)"),
+            _s("sending_responsible_org_assigning_authority_universal_id","Assigning authority universal ID (MSH-22.6.2)"),
+            _s("sending_responsible_org_assigning_authority_universal_id_type","Assigning authority universal ID type (MSH-22.6.3)"),
             _s("sending_responsible_org_id_type_code",                 "Identifier type code (MSH-22.7)"),
-            _s("sending_responsible_org_assigning_facility",           "Assigning facility (MSH-22.8, HD)"),
+            _s("sending_responsible_org_assigning_facility",           "Assigning facility namespace ID (MSH-22.8.1, HD)"),
+            _s("sending_responsible_org_assigning_facility_universal_id","Assigning facility universal ID (MSH-22.8.2)"),
+            _s("sending_responsible_org_assigning_facility_universal_id_type","Assigning facility universal ID type (MSH-22.8.3)"),
             _s("sending_responsible_org_name_rep_code",                "Name representation code (MSH-22.9)"),
             _s("sending_responsible_org_identifier",                   "Organization identifier (MSH-22.10)"),
             _s("receiving_responsible_org",                            "Organization name (MSH-23.1, XON, v2.7+)"),
@@ -980,9 +1040,13 @@ def register_lakeflow_source(spark):
             _s("receiving_responsible_org_id",                         "ID number (MSH-23.3)"),
             _s("receiving_responsible_org_check_digit",                "Identifier check digit (MSH-23.4)"),
             _s("receiving_responsible_org_check_digit_scheme",         "Check digit scheme (MSH-23.5)"),
-            _s("receiving_responsible_org_assigning_authority",        "Assigning authority (MSH-23.6, HD)"),
+            _s("receiving_responsible_org_assigning_authority",        "Assigning authority namespace ID (MSH-23.6.1, HD)"),
+            _s("receiving_responsible_org_assigning_authority_universal_id","Assigning authority universal ID (MSH-23.6.2)"),
+            _s("receiving_responsible_org_assigning_authority_universal_id_type","Assigning authority universal ID type (MSH-23.6.3)"),
             _s("receiving_responsible_org_id_type_code",               "Identifier type code (MSH-23.7)"),
-            _s("receiving_responsible_org_assigning_facility",         "Assigning facility (MSH-23.8, HD)"),
+            _s("receiving_responsible_org_assigning_facility",         "Assigning facility namespace ID (MSH-23.8.1, HD)"),
+            _s("receiving_responsible_org_assigning_facility_universal_id","Assigning facility universal ID (MSH-23.8.2)"),
+            _s("receiving_responsible_org_assigning_facility_universal_id_type","Assigning facility universal ID type (MSH-23.8.3)"),
             _s("receiving_responsible_org_name_rep_code",              "Name representation code (MSH-23.9)"),
             _s("receiving_responsible_org_identifier",                 "Organization identifier (MSH-23.10)"),
             _s("sending_network_address",                              "Namespace ID of the sending network address (MSH-24.1, HD, v2.7+)"),
@@ -1020,18 +1084,15 @@ def register_lakeflow_source(spark):
             _s("patient_id_value",              "Primary patient identifier value, typically the Medical Record Number (PID-3.1)"),
             _s("patient_id_check_digit",        "Check digit computed for the patient identifier (PID-3.2)"),
             _s("patient_id_check_digit_scheme", "Algorithm used to compute the check digit, e.g. M10, M11 (PID-3.3)"),
-            _s("patient_id_assigning_authority","Facility or system that assigned the patient identifier (PID-3.4)"),
+            _s("patient_id_assigning_authority","Assigning authority namespace ID — facility or system that assigned the patient identifier (PID-3.4.1)"),
+            _s("patient_id_assigning_authority_universal_id","Assigning authority universal ID, e.g. OID (PID-3.4.2)"),
+            _s("patient_id_assigning_authority_universal_id_type","Type of assigning authority universal ID, e.g. ISO (PID-3.4.3)"),
             _s("patient_id_type_code",          "Type of patient identifier, e.g. MR=Medical Record, PI=Patient Internal (PID-3.5)"),
             _s("alternate_patient_id",          "Alternate patient identifier from a prior system (PID-4, deprecated in v2.7)"),
-            _s("patient_name",                  "Full patient name composite (PID-5), raw; use patient_family_name / patient_given_name"),
-            _s("patient_family_name",           "Patient last/family name (PID-5.1)"),
-            _s("patient_given_name",            "Patient first/given name (PID-5.2)"),
-            _s("patient_middle_name",           "Patient middle name or initial (PID-5.3)"),
-            _s("patient_name_suffix",           "Name suffix, e.g. Jr, Sr, III (PID-5.5)"),
-            _s("patient_name_prefix",           "Name prefix/title, e.g. Dr, Mr, Ms (PID-5.6)"),
-            _s("mothers_maiden_name",           "Mother's maiden family name (PID-6.1)"),
-            _s("mothers_maiden_given_name",     "Mother's maiden given/first name (PID-6.2)"),
-            _s("mothers_maiden_middle_name",    "Mother's maiden middle name or initial (PID-6.3)"),
+            _s("patient_name",                  "Full patient name composite (PID-5), raw; use patient_name_* fields"),
+            *_xpn_schema("patient_name", "Patient", "PID-5"),
+            _s("mothers_maiden_name",           "Mother's maiden name composite (PID-6), raw; use mothers_maiden_* fields"),
+            *_xpn_schema("mothers_maiden", "Mother's maiden", "PID-6"),
             _ts("date_of_birth",                "Date of birth parsed to timestamp (PID-7)"),
             _s("administrative_sex",            "Administrative gender code (PID-8): M=Male, F=Female, O=Other, U=Unknown"),
             _s("patient_alias",                 "Alias name(s) for the patient (PID-9, deprecated in v2.7)"),
@@ -1072,13 +1133,17 @@ def register_lakeflow_source(spark):
             _s("religion_alt_coding_system",    "Secondary coding system for the religion code (PID-17.6)"),
             _s("patient_account_number",        "Patient account number at the healthcare facility (PID-18.1)"),
             _s("patient_account_check_digit",   "Check digit for the patient account number (PID-18.2)"),
-            _s("patient_account_assigning_authority","Authority that assigned the account number (PID-18.4)"),
+            _s("patient_account_assigning_authority","Assigning authority namespace ID for the account (PID-18.4.1)"),
+            _s("patient_account_assigning_authority_universal_id","Account assigning authority universal ID (PID-18.4.2)"),
+            _s("patient_account_assigning_authority_universal_id_type","Account assigning authority universal ID type (PID-18.4.3)"),
             _s("patient_account_type_code",     "Type of account identifier (PID-18.5)"),
             _s("ssn",                           "Social Security Number (PID-19, deprecated in v2.7)"),
             _s("drivers_license",               "Driver's license number and issuing state (PID-20, deprecated in v2.7)"),
             _s("mothers_identifier",            "Identifier for the patient's mother; used in neonatal records (PID-21.1)"),
             _s("mothers_id_check_digit",        "Check digit for the mother's identifier (PID-21.2)"),
-            _s("mothers_id_assigning_authority","Authority that assigned the mother's identifier (PID-21.4)"),
+            _s("mothers_id_assigning_authority","Assigning authority namespace ID for the mother's identifier (PID-21.4.1)"),
+            _s("mothers_id_assigning_authority_universal_id","Mother's ID assigning authority universal ID (PID-21.4.2)"),
+            _s("mothers_id_assigning_authority_universal_id_type","Mother's ID assigning authority universal ID type (PID-21.4.3)"),
             _s("mothers_id_type_code",          "Type of mother's identifier, e.g. MR, PI (PID-21.5)"),
             _s("ethnic_group",                  "Ethnic group code per HL7 table 0189 (PID-22.1)"),
             _s("ethnic_group_text",             "Human-readable ethnic group description (PID-22.2)"),
@@ -1350,7 +1415,9 @@ def register_lakeflow_source(spark):
             _s("parent_observation_group_universal_id_type","Parent observation group universal ID type (OBR-52.4, v2.8.2+)"),
             _s("alternate_placer_order_number_obr",   "Alternate placer order number ID (OBR-53.1, v2.8.2+)"),
             _s("alternate_placer_order_check_digit",  "Alternate placer order check digit (OBR-53.2, v2.8.2+)"),
-            _s("alternate_placer_order_assigning_authority","Alternate placer order assigning authority (OBR-53.4, v2.8.2+)"),
+            _s("alternate_placer_order_assigning_authority","Alternate placer order assigning authority namespace ID (OBR-53.4.1, v2.8.2+)"),
+            _s("alternate_placer_order_assigning_authority_universal_id","Alternate placer order assigning authority universal ID (OBR-53.4.2, v2.8.2+)"),
+            _s("alternate_placer_order_assigning_authority_universal_id_type","Alternate placer order assigning authority universal ID type (OBR-53.4.3, v2.8.2+)"),
             _s("alternate_placer_order_type_code",    "Alternate placer order ID type code (OBR-53.5, v2.8.2+)"),
             _s("parent_order",                        "Parent order identifier (OBR-54.1, v2.9+)"),
             _s("obr_action_code",                     "Action code (OBR-55, v2.9+)"),
@@ -1438,9 +1505,13 @@ def register_lakeflow_source(spark):
             _s("performing_organization_id",      "Organization ID number (OBX-23.3, v2.7+)"),
             _s("performing_organization_check_digit","Organization check digit (OBX-23.4, v2.7+)"),
             _s("performing_organization_check_digit_scheme","Check digit scheme for the organization ID (OBX-23.5, v2.7+)"),
-            _s("performing_organization_assigning_authority","Authority that assigned the organization ID (OBX-23.6, v2.7+)"),
+            _s("performing_organization_assigning_authority","Assigning authority namespace ID (OBX-23.6.1, v2.7+, HD)"),
+            _s("performing_organization_assigning_authority_universal_id","Assigning authority universal ID (OBX-23.6.2, v2.7+)"),
+            _s("performing_organization_assigning_authority_universal_id_type","Assigning authority universal ID type (OBX-23.6.3, v2.7+)"),
             _s("performing_organization_id_type_code","Type of organization ID, e.g. NPI, CLIA (OBX-23.7, v2.7+)"),
-            _s("performing_organization_assigning_facility","Facility that assigned the organization ID (OBX-23.8, v2.7+)"),
+            _s("performing_organization_assigning_facility","Assigning facility namespace ID (OBX-23.8.1, v2.7+, HD)"),
+            _s("performing_organization_assigning_facility_universal_id","Assigning facility universal ID (OBX-23.8.2, v2.7+)"),
+            _s("performing_organization_assigning_facility_universal_id_type","Assigning facility universal ID type (OBX-23.8.3, v2.7+)"),
             _s("performing_organization_name_rep_code","Name representation code (OBX-23.9, v2.7+)"),
             _s("performing_organization_identifier","Organization identifier (OBX-23.10, v2.7+)"),
             _s("performing_organization_address", "Full performing organization address composite (OBX-24, v2.7+), raw"),
@@ -1544,10 +1615,8 @@ def register_lakeflow_source(spark):
         _METADATA_FIELDS
         + [
             _pk_i("set_id",                  "Sequence number of this next-of-kin record within the message; part of composite primary key (NK1-1)"),
-            _s("name",                       "Full name composite of the next of kin (NK1-2), raw; use nk_family_name / nk_given_name"),
-            _s("nk_family_name",             "Next of kin last/family name (NK1-2.1)"),
-            _s("nk_given_name",              "Next of kin first/given name (NK1-2.2)"),
-            _s("nk_middle_name",             "Next of kin middle name or initial (NK1-2.3)"),
+            _s("name",                       "Full name composite of the next of kin (NK1-2), raw; use nk_* fields"),
+            *_xpn_schema("nk", "Next of kin", "NK1-2"),
             _s("relationship",               "Relationship to patient composite (NK1-3), raw; use relationship_code / relationship_text"),
             _s("relationship_code",          "Coded relationship to patient (NK1-3.1): SPO=Spouse, MTH=Mother, FTH=Father, CHD=Child, GRD=Guardian"),
             _s("relationship_text",          "Human-readable relationship description (NK1-3.2)"),
@@ -1573,11 +1642,13 @@ def register_lakeflow_source(spark):
             _s("protection_indicator",       "Whether to restrict sharing of this contact's information: Y or N (NK1-23)"),
             _s("student_indicator",          "Student status of the next of kin: F=Full-time, P=Part-time (NK1-24)"),
             _s("religion",                   "Religion code of the next of kin (NK1-25.1)"),
-            _s("mothers_maiden_name",        "Mother's maiden family name of the next of kin (NK1-26.1)"),
+            _s("mothers_maiden_name",        "Mother's maiden name composite (NK1-26), raw; use mothers_maiden_* fields"),
+            *_xpn_schema("mothers_maiden", "NK1 mother's maiden", "NK1-26"),
             _s("nationality",                "Nationality of the next of kin (NK1-27.1)"),
             _s("ethnic_group",               "Ethnic group code of the next of kin (NK1-28.1)"),
             _s("contact_reason",             "Reason this person is listed as a contact (NK1-29.1)"),
-            _s("contact_person_name",        "Name of the contact person if different from the next of kin (NK1-30.1)"),
+            _s("contact_person_name",        "Contact person name composite (NK1-30), raw; use contact_person_* fields"),
+            *_xpn_schema("contact_person", "Contact person", "NK1-30"),
             _s("contact_person_telephone",   "Telephone number of the contact person (NK1-31)"),
             _s("contact_persons_address",    "Address of the contact person (NK1-32)"),
             _s("associated_party_identifiers","Identifier for the associated party, e.g. employee ID (NK1-33.1)"),
@@ -1716,9 +1787,8 @@ def register_lakeflow_source(spark):
             _s("prior_patient_id",                "Prior patient ID (MRG-4.1, deprecated)"),
             _s("prior_visit_number",              "Prior visit number (MRG-5.1)"),
             _s("prior_alternate_visit_id",        "Prior alternate visit ID (MRG-6.1)"),
-            _s("prior_patient_name",              "Prior patient name raw (MRG-7)"),
-            _s("prior_patient_family_name",       "Prior patient family name (MRG-7.1)"),
-            _s("prior_patient_given_name",        "Prior patient given name (MRG-7.2)"),
+            _s("prior_patient_name",              "Prior patient name composite (MRG-7), raw; use prior_patient_* fields"),
+            *_xpn_schema("prior_patient", "Prior patient", "MRG-7"),
         ]
     )
 
@@ -1746,9 +1816,8 @@ def register_lakeflow_source(spark):
             _s("onset_date",                          "Allergy onset date (IAM-11)"),
             _s("onset_date_text",                     "Free-text onset date description (IAM-12)"),
             _ts("reported_datetime",                  "When the allergy was reported (IAM-13)"),
-            _s("reported_by",                         "Person who reported the allergy raw (IAM-14)"),
-            _s("reported_by_family_name",             "Reporter family name (IAM-14.1)"),
-            _s("reported_by_given_name",              "Reporter given name (IAM-14.2)"),
+            _s("reported_by",                         "Person who reported the allergy composite (IAM-14), raw; use reported_by_* fields"),
+            *_xpn_schema("reported_by", "Allergy reporter", "IAM-14"),
             _s("relationship_to_patient_code",        "Reporter's relationship to patient (IAM-15.1)"),
             _s("alert_device_code",                   "Alert device code (IAM-16.1)"),
             _s("allergy_clinical_status_code",        "Clinical status (IAM-17.1): A=Active, I=Inactive, R=Resolved"),
@@ -1937,7 +2006,8 @@ def register_lakeflow_source(spark):
             _s("insurance_company_id",             "Insurance company identifier (IN1-3.1)"),
             _s("insurance_company_name",           "Insurance company name (IN1-4.1)"),
             _s("insurance_company_address",        "Insurance company address (IN1-5)"),
-            _s("insurance_co_contact_person",      "Contact person at insurance company (IN1-6.1)"),
+            _s("insurance_co_contact_person",      "Insurance company contact person composite (IN1-6), raw; use insurance_co_contact_* fields"),
+            *_xpn_schema("insurance_co_contact", "Insurance contact", "IN1-6"),
             _s("insurance_co_phone_number",        "Insurance company phone number (IN1-7)"),
             _s("group_number",                     "Insurance group/policy group number (IN1-8)"),
             _s("group_name",                       "Insurance group name (IN1-9.1)"),
@@ -1947,9 +2017,8 @@ def register_lakeflow_source(spark):
             _s("plan_expiration_date",             "Plan expiration date (IN1-13)"),
             _s("authorization_information",        "Authorization information (IN1-14.1)"),
             _s("plan_type",                        "Plan type (IN1-15)"),
-            _s("name_of_insured",                  "Insured person's name raw (IN1-16)"),
-            _s("name_of_insured_family",           "Insured person's family name (IN1-16.1)"),
-            _s("name_of_insured_given",            "Insured person's given name (IN1-16.2)"),
+            _s("name_of_insured",                  "Insured person's name composite (IN1-16), raw; use insured_* fields"),
+            *_xpn_schema("insured", "Insured person", "IN1-16"),
             _s("insureds_relationship_to_patient", "Relationship to patient code (IN1-17.1)"),
             _ts("insureds_date_of_birth",          "Insured's date of birth (IN1-18)"),
             _s("insureds_address",                 "Insured's address (IN1-19)"),
@@ -2001,10 +2070,10 @@ def register_lakeflow_source(spark):
         + [
             _pk_i("set_id",                           "Sequence number for this GT1 segment within the message (GT1-1)"),
             _s("guarantor_number",                     "Guarantor identifier (GT1-2.1)"),
-            _s("guarantor_name",                       "Guarantor name raw (GT1-3)"),
-            _s("guarantor_family_name",                "Guarantor family name (GT1-3.1)"),
-            _s("guarantor_given_name",                 "Guarantor given name (GT1-3.2)"),
-            _s("guarantor_spouse_name",                "Guarantor spouse name (GT1-4.1)"),
+            _s("guarantor_name",                       "Guarantor name composite (GT1-3), raw; use guarantor_* fields"),
+            *_xpn_schema("guarantor", "Guarantor", "GT1-3"),
+            _s("guarantor_spouse_name",                "Guarantor spouse name composite (GT1-4), raw; use guarantor_spouse_* fields"),
+            *_xpn_schema("guarantor_spouse", "Guarantor spouse", "GT1-4"),
             _s("guarantor_address",                    "Guarantor address (GT1-5)"),
             _s("guarantor_ph_num_home",                "Guarantor home phone (GT1-6)"),
             _s("guarantor_ph_num_business",            "Guarantor business phone (GT1-7)"),
@@ -2016,7 +2085,8 @@ def register_lakeflow_source(spark):
             _s("guarantor_date_begin",                 "Guarantor start date (GT1-13)"),
             _s("guarantor_date_end",                   "Guarantor end date (GT1-14)"),
             _i("guarantor_priority",                   "Guarantor priority (GT1-15)"),
-            _s("guarantor_employer_name",              "Guarantor employer name (GT1-16.1)"),
+            _s("guarantor_employer_name",              "Guarantor employer name composite (GT1-16), raw; use guarantor_employer_* fields"),
+            *_xpn_schema("guarantor_employer", "Guarantor employer", "GT1-16"),
             _s("guarantor_employer_address",           "Guarantor employer address (GT1-17)"),
             _s("guarantor_employer_phone_number",      "Guarantor employer phone (GT1-18)"),
             _s("guarantor_employee_id_number",         "Guarantor employee ID (GT1-19.1)"),
@@ -2042,10 +2112,12 @@ def register_lakeflow_source(spark):
             _s("protection_indicator",                 "Protection indicator Y/N (GT1-39)"),
             _s("student_indicator",                    "Student status (GT1-40)"),
             _s("religion",                             "Religion (GT1-41.1)"),
-            _s("mothers_maiden_name",                  "Mother's maiden name (GT1-42.1)"),
+            _s("mothers_maiden_name",                  "GT1 mother's maiden name composite (GT1-42), raw; use gt1_mothers_maiden_* fields"),
+            *_xpn_schema("gt1_mothers_maiden", "GT1 mother's maiden", "GT1-42"),
             _s("nationality",                          "Nationality (GT1-43.1)"),
             _s("ethnic_group",                         "Ethnic group (GT1-44.1)"),
-            _s("contact_persons_name",                 "Contact person name (GT1-45.1)"),
+            _s("contact_persons_name",                 "GT1 contact person name composite (GT1-45), raw; use gt1_contact_person_* fields"),
+            *_xpn_schema("gt1_contact_person", "GT1 contact person", "GT1-45"),
             _s("contact_persons_telephone_number",     "Contact person phone (GT1-46)"),
             _s("contact_reason",                       "Contact reason (GT1-47.1)"),
             _s("contact_relationship",                 "Contact relationship (GT1-48)"),
@@ -2388,6 +2460,42 @@ def register_lakeflow_source(spark):
 
 
     # ---------------------------------------------------------------------------
+    # XPN (Extended Person Name) helper — extracts all 15 components
+    # ---------------------------------------------------------------------------
+
+
+    def _xpn_fields(
+        seg: HL7Segment, field_n: int, prefix: str, *, repeating: bool = True
+    ) -> dict:
+        """Extract all XPN components for *field_n* with column names prefixed by *prefix*.
+
+        Set ``repeating=False`` for non-repeating XPN fields (uses get_component
+        instead of get_rep_component).
+        """
+        if repeating:
+            gc = lambda comp: _v(seg.get_rep_component(field_n, 1, comp))
+        else:
+            gc = lambda comp: _v(seg.get_component(field_n, comp))
+
+        return {
+            f"{prefix}_family_name": gc(1),
+            f"{prefix}_given_name": gc(2),
+            f"{prefix}_middle_name": gc(3),
+            f"{prefix}_suffix": gc(4),
+            f"{prefix}_prefix": gc(5),
+            f"{prefix}_degree": gc(6),
+            f"{prefix}_name_type_code": gc(7),
+            f"{prefix}_name_representation_code": gc(8),
+            f"{prefix}_name_context": gc(9),
+            f"{prefix}_name_assembly_order": gc(11),
+            f"{prefix}_name_effective_date": gc(12),
+            f"{prefix}_name_expiration_date": gc(13),
+            f"{prefix}_professional_suffix": gc(14),
+            f"{prefix}_called_by": gc(15),
+        }
+
+
+    # ---------------------------------------------------------------------------
     # Metadata builder (from MSH segment, added to every row)
     # ---------------------------------------------------------------------------
 
@@ -2457,8 +2565,12 @@ def register_lakeflow_source(spark):
             "sending_responsible_org_check_digit": _v(seg.get_component(22, 4)),
             "sending_responsible_org_check_digit_scheme": _v(seg.get_component(22, 5)),
             "sending_responsible_org_assigning_authority": _v(seg.get_component(22, 6)),
+            "sending_responsible_org_assigning_authority_universal_id": _v(seg.get_sub_component(22, 6, 2)),
+            "sending_responsible_org_assigning_authority_universal_id_type": _v(seg.get_sub_component(22, 6, 3)),
             "sending_responsible_org_id_type_code": _v(seg.get_component(22, 7)),
             "sending_responsible_org_assigning_facility": _v(seg.get_component(22, 8)),
+            "sending_responsible_org_assigning_facility_universal_id": _v(seg.get_sub_component(22, 8, 2)),
+            "sending_responsible_org_assigning_facility_universal_id_type": _v(seg.get_sub_component(22, 8, 3)),
             "sending_responsible_org_name_rep_code": _v(seg.get_component(22, 9)),
             "sending_responsible_org_identifier": _v(seg.get_component(22, 10)),
             "receiving_responsible_org": _v(seg.get_component(23, 1)),
@@ -2467,8 +2579,12 @@ def register_lakeflow_source(spark):
             "receiving_responsible_org_check_digit": _v(seg.get_component(23, 4)),
             "receiving_responsible_org_check_digit_scheme": _v(seg.get_component(23, 5)),
             "receiving_responsible_org_assigning_authority": _v(seg.get_component(23, 6)),
+            "receiving_responsible_org_assigning_authority_universal_id": _v(seg.get_sub_component(23, 6, 2)),
+            "receiving_responsible_org_assigning_authority_universal_id_type": _v(seg.get_sub_component(23, 6, 3)),
             "receiving_responsible_org_id_type_code": _v(seg.get_component(23, 7)),
             "receiving_responsible_org_assigning_facility": _v(seg.get_component(23, 8)),
+            "receiving_responsible_org_assigning_facility_universal_id": _v(seg.get_sub_component(23, 8, 2)),
+            "receiving_responsible_org_assigning_facility_universal_id_type": _v(seg.get_sub_component(23, 8, 3)),
             "receiving_responsible_org_name_rep_code": _v(seg.get_component(23, 9)),
             "receiving_responsible_org_identifier": _v(seg.get_component(23, 10)),
             "sending_network_address": _v(seg.get_component(24, 1)),
@@ -2502,17 +2618,14 @@ def register_lakeflow_source(spark):
             "patient_id_check_digit": _v(seg.get_rep_component(3, 1, 2)),
             "patient_id_check_digit_scheme": _v(seg.get_rep_component(3, 1, 3)),
             "patient_id_assigning_authority": _v(seg.get_rep_component(3, 1, 4)),
+            "patient_id_assigning_authority_universal_id": _v(seg.get_rep_sub_component(3, 1, 4, 2)),
+            "patient_id_assigning_authority_universal_id_type": _v(seg.get_rep_sub_component(3, 1, 4, 3)),
             "patient_id_type_code": _v(seg.get_rep_component(3, 1, 5)),
             "alternate_patient_id": _v(seg.get_first_repetition(4)),
             "patient_name": _v(seg.get_first_repetition(5)),
-            "patient_family_name": _v(seg.get_rep_component(5, 1, 1)),
-            "patient_given_name": _v(seg.get_rep_component(5, 1, 2)),
-            "patient_middle_name": _v(seg.get_rep_component(5, 1, 3)),
-            "patient_name_suffix": _v(seg.get_rep_component(5, 1, 5)),
-            "patient_name_prefix": _v(seg.get_rep_component(5, 1, 6)),
-            "mothers_maiden_name": _v(seg.get_rep_component(6, 1, 1)),
-            "mothers_maiden_given_name": _v(seg.get_rep_component(6, 1, 2)),
-            "mothers_maiden_middle_name": _v(seg.get_rep_component(6, 1, 3)),
+            **_xpn_fields(seg, 5, "patient_name"),
+            "mothers_maiden_name": _v(seg.get_first_repetition(6)),
+            **_xpn_fields(seg, 6, "mothers_maiden"),
             "date_of_birth": _parse_dtm(seg.get_field(7)),
             "administrative_sex": _v(seg.get_field(8)),
             "patient_alias": _v(seg.get_first_repetition(9)),
@@ -2554,12 +2667,16 @@ def register_lakeflow_source(spark):
             "patient_account_number": _v(seg.get_component(18, 1)),
             "patient_account_check_digit": _v(seg.get_component(18, 2)),
             "patient_account_assigning_authority": _v(seg.get_component(18, 4)),
+            "patient_account_assigning_authority_universal_id": _v(seg.get_sub_component(18, 4, 2)),
+            "patient_account_assigning_authority_universal_id_type": _v(seg.get_sub_component(18, 4, 3)),
             "patient_account_type_code": _v(seg.get_component(18, 5)),
             "ssn": _v(seg.get_field(19)),
             "drivers_license": _v(seg.get_field(20)),
             "mothers_identifier": _v(seg.get_rep_component(21, 1, 1)),
             "mothers_id_check_digit": _v(seg.get_rep_component(21, 1, 2)),
             "mothers_id_assigning_authority": _v(seg.get_rep_component(21, 1, 4)),
+            "mothers_id_assigning_authority_universal_id": _v(seg.get_rep_sub_component(21, 1, 4, 2)),
+            "mothers_id_assigning_authority_universal_id_type": _v(seg.get_rep_sub_component(21, 1, 4, 3)),
             "mothers_id_type_code": _v(seg.get_rep_component(21, 1, 5)),
             "ethnic_group": _v(seg.get_rep_component(22, 1, 1)),
             "ethnic_group_text": _v(seg.get_rep_component(22, 1, 2)),
@@ -2822,6 +2939,8 @@ def register_lakeflow_source(spark):
             "alternate_placer_order_number_obr": _v(seg.get_component(53, 1)),
             "alternate_placer_order_check_digit": _v(seg.get_component(53, 2)),
             "alternate_placer_order_assigning_authority": _v(seg.get_component(53, 4)),
+            "alternate_placer_order_assigning_authority_universal_id": _v(seg.get_sub_component(53, 4, 2)),
+            "alternate_placer_order_assigning_authority_universal_id_type": _v(seg.get_sub_component(53, 4, 3)),
             "alternate_placer_order_type_code": _v(seg.get_component(53, 5)),
             "parent_order": _v(seg.get_component(54, 1)),
             "obr_action_code": _v(seg.get_field(55)),
@@ -2905,8 +3024,12 @@ def register_lakeflow_source(spark):
             "performing_organization_check_digit": _v(seg.get_component(23, 4)),
             "performing_organization_check_digit_scheme": _v(seg.get_component(23, 5)),
             "performing_organization_assigning_authority": _v(seg.get_component(23, 6)),
+            "performing_organization_assigning_authority_universal_id": _v(seg.get_sub_component(23, 6, 2)),
+            "performing_organization_assigning_authority_universal_id_type": _v(seg.get_sub_component(23, 6, 3)),
             "performing_organization_id_type_code": _v(seg.get_component(23, 7)),
             "performing_organization_assigning_facility": _v(seg.get_component(23, 8)),
+            "performing_organization_assigning_facility_universal_id": _v(seg.get_sub_component(23, 8, 2)),
+            "performing_organization_assigning_facility_universal_id_type": _v(seg.get_sub_component(23, 8, 3)),
             "performing_organization_name_rep_code": _v(seg.get_component(23, 9)),
             "performing_organization_identifier": _v(seg.get_component(23, 10)),
             "performing_organization_address": _v(seg.get_field(24)),
@@ -2996,9 +3119,7 @@ def register_lakeflow_source(spark):
         return {
             "set_id": _i(seg.get_field(1)) or 1,
             "name": _v(seg.get_first_repetition(2)),
-            "nk_family_name": _v(seg.get_rep_component(2, 1, 1)),
-            "nk_given_name": _v(seg.get_rep_component(2, 1, 2)),
-            "nk_middle_name": _v(seg.get_rep_component(2, 1, 3)),
+            **_xpn_fields(seg, 2, "nk"),
             "relationship": _v(seg.get_field(3)),
             "relationship_code": _v(seg.get_component(3, 1)),
             "relationship_text": _v(seg.get_component(3, 2)),
@@ -3024,11 +3145,13 @@ def register_lakeflow_source(spark):
             "protection_indicator": _v(seg.get_field(23)),
             "student_indicator": _v(seg.get_field(24)),
             "religion": _v(seg.get_component(25, 1)),
-            "mothers_maiden_name": _v(seg.get_rep_component(26, 1, 1)),
+            "mothers_maiden_name": _v(seg.get_first_repetition(26)),
+            **_xpn_fields(seg, 26, "mothers_maiden"),
             "nationality": _v(seg.get_component(27, 1)),
             "ethnic_group": _v(seg.get_rep_component(28, 1, 1)),
             "contact_reason": _v(seg.get_rep_component(29, 1, 1)),
-            "contact_person_name": _v(seg.get_rep_component(30, 1, 1)),
+            "contact_person_name": _v(seg.get_first_repetition(30)),
+            **_xpn_fields(seg, 30, "contact_person"),
             "contact_person_telephone": _v(seg.get_first_repetition(31)),
             "contact_persons_address": _v(seg.get_first_repetition(32)),
             "associated_party_identifiers": _v(seg.get_rep_component(33, 1, 1)),
@@ -3148,8 +3271,7 @@ def register_lakeflow_source(spark):
             "prior_visit_number": _v(seg.get_component(5, 1)),
             "prior_alternate_visit_id": _v(seg.get_component(6, 1)),
             "prior_patient_name": _v(seg.get_first_repetition(7)),
-            "prior_patient_family_name": _v(seg.get_rep_component(7, 1, 1)),
-            "prior_patient_given_name": _v(seg.get_rep_component(7, 1, 2)),
+            **_xpn_fields(seg, 7, "prior_patient"),
         }
 
 
@@ -3173,8 +3295,7 @@ def register_lakeflow_source(spark):
             "onset_date_text": _v(seg.get_field(12)),
             "reported_datetime": _parse_dtm(seg.get_field(13)),
             "reported_by": _v(seg.get_first_repetition(14)),
-            "reported_by_family_name": _v(seg.get_rep_component(14, 1, 1)),
-            "reported_by_given_name": _v(seg.get_rep_component(14, 1, 2)),
+            **_xpn_fields(seg, 14, "reported_by"),
             "relationship_to_patient_code": _v(seg.get_component(15, 1)),
             "alert_device_code": _v(seg.get_component(16, 1)),
             "allergy_clinical_status_code": _v(seg.get_component(17, 1)),
@@ -3337,7 +3458,8 @@ def register_lakeflow_source(spark):
             "insurance_company_id": _v(seg.get_rep_component(3, 1, 1)),
             "insurance_company_name": _v(seg.get_rep_component(4, 1, 1)),
             "insurance_company_address": _v(seg.get_first_repetition(5)),
-            "insurance_co_contact_person": _v(seg.get_rep_component(6, 1, 1)),
+            "insurance_co_contact_person": _v(seg.get_first_repetition(6)),
+            **_xpn_fields(seg, 6, "insurance_co_contact"),
             "insurance_co_phone_number": _v(seg.get_first_repetition(7)),
             "group_number": _v(seg.get_field(8)),
             "group_name": _v(seg.get_rep_component(9, 1, 1)),
@@ -3348,8 +3470,7 @@ def register_lakeflow_source(spark):
             "authorization_information": _v(seg.get_component(14, 1)),
             "plan_type": _v(seg.get_field(15)),
             "name_of_insured": _v(seg.get_first_repetition(16)),
-            "name_of_insured_family": _v(seg.get_rep_component(16, 1, 1)),
-            "name_of_insured_given": _v(seg.get_rep_component(16, 1, 2)),
+            **_xpn_fields(seg, 16, "insured"),
             "insureds_relationship_to_patient": _v(seg.get_component(17, 1)),
             "insureds_date_of_birth": _parse_dtm(seg.get_field(18)),
             "insureds_address": _v(seg.get_first_repetition(19)),
@@ -3397,9 +3518,9 @@ def register_lakeflow_source(spark):
             "set_id": _i(seg.get_field(1)) or 1,
             "guarantor_number": _v(seg.get_rep_component(2, 1, 1)),
             "guarantor_name": _v(seg.get_first_repetition(3)),
-            "guarantor_family_name": _v(seg.get_rep_component(3, 1, 1)),
-            "guarantor_given_name": _v(seg.get_rep_component(3, 1, 2)),
-            "guarantor_spouse_name": _v(seg.get_rep_component(4, 1, 1)),
+            **_xpn_fields(seg, 3, "guarantor"),
+            "guarantor_spouse_name": _v(seg.get_first_repetition(4)),
+            **_xpn_fields(seg, 4, "guarantor_spouse"),
             "guarantor_address": _v(seg.get_first_repetition(5)),
             "guarantor_ph_num_home": _v(seg.get_first_repetition(6)),
             "guarantor_ph_num_business": _v(seg.get_first_repetition(7)),
@@ -3411,7 +3532,8 @@ def register_lakeflow_source(spark):
             "guarantor_date_begin": _v(seg.get_field(13)),
             "guarantor_date_end": _v(seg.get_field(14)),
             "guarantor_priority": _i(seg.get_field(15)),
-            "guarantor_employer_name": _v(seg.get_rep_component(16, 1, 1)),
+            "guarantor_employer_name": _v(seg.get_first_repetition(16)),
+            **_xpn_fields(seg, 16, "guarantor_employer"),
             "guarantor_employer_address": _v(seg.get_first_repetition(17)),
             "guarantor_employer_phone_number": _v(seg.get_first_repetition(18)),
             "guarantor_employee_id_number": _v(seg.get_rep_component(19, 1, 1)),
@@ -3437,10 +3559,12 @@ def register_lakeflow_source(spark):
             "protection_indicator": _v(seg.get_field(39)),
             "student_indicator": _v(seg.get_field(40)),
             "religion": _v(seg.get_component(41, 1)),
-            "mothers_maiden_name": _v(seg.get_rep_component(42, 1, 1)),
+            "mothers_maiden_name": _v(seg.get_first_repetition(42)),
+            **_xpn_fields(seg, 42, "gt1_mothers_maiden"),
             "nationality": _v(seg.get_component(43, 1)),
             "ethnic_group": _v(seg.get_rep_component(44, 1, 1)),
-            "contact_persons_name": _v(seg.get_rep_component(45, 1, 1)),
+            "contact_persons_name": _v(seg.get_first_repetition(45)),
+            **_xpn_fields(seg, 45, "gt1_contact_person"),
             "contact_persons_telephone_number": _v(seg.get_first_repetition(46)),
             "contact_reason": _v(seg.get_component(47, 1)),
             "contact_relationship": _v(seg.get_field(48)),

@@ -1149,17 +1149,19 @@ HL7 v2 defines its own data types. The connector maps them to Spark SQL types fo
 
 For repeating fields (separated by `~`), use `get_rep_component` instead of `get_component` to prevent the repetition separator from bleeding into component values. Only the first repetition is captured; the full value is preserved in `raw_segment`.
 
+**IMPORTANT — Sub-component Extraction Rule:** When a component is itself a composite data type (e.g. HD or EI inside CX, XCN, or XON), its sub-components (separated by `&`) MUST also be extracted into individual columns using `get_sub_component(field, comp, sub)` or `get_rep_sub_component(field, rep, comp, sub)`. The most common case is **Assigning Authority (HD)** and **Assigning Facility (HD)** inside CX, XCN, and XON types — these must always be broken down into `namespace_id` (sub 1), `universal_id` (sub 2), and `universal_id_type` (sub 3). The raw component value (which already has `&` in it) is kept as well for convenience.
+
 | HL7 Type | Name | Components | Connector Extraction |
 |---|---|---|---|
 | CE | Coded Element | identifier ^ text ^ coding system ^ alt-id ^ alt-text ^ alt-coding-system | ALL 6: code, text, coding_system, alt_code, alt_text, alt_coding_system |
 | CWE | Coded with Exceptions | Same as CE plus additional components | ALL 6 (same as CE): code, text, coding_system, alt_code, alt_text, alt_coding_system |
 | CNE | Coded with No Exceptions | Same as CE plus additional components | ALL 6 (same as CE): code, text, coding_system, alt_code, alt_text, alt_coding_system |
-| CX | Extended Composite ID | ID ^ check digit ^ check digit scheme ^ assigning authority ^ ID type ^ assigning facility ^ effective date ^ expiration date ^ assigning jurisdiction ^ assigning agency | Key components: id_value, check_digit, assigning_authority, type_code |
-| XPN | Extended Person Name | family ^ given ^ middle ^ suffix ^ prefix ^ degree ^ name type | Components: family_name, given_name, middle_name, suffix, prefix |
+| CX | Extended Composite ID | ID ^ check digit ^ check digit scheme ^ assigning authority (HD) ^ ID type ^ assigning facility (HD) ^ effective date ^ expiration date ^ assigning jurisdiction ^ assigning agency | Key components: id_value, check_digit, assigning_authority (+ HD sub-components: universal_id, universal_id_type), type_code |
+| XPN | Extended Person Name | family (FN) ^ given ^ middle ^ suffix ^ prefix ^ degree (W) ^ name type code ^ name rep code ^ name context (CWE) ^ validity range (W) ^ assembly order ^ effective date ^ expiration date ^ professional suffix ^ called by | ALL 14 active components (skip comp 10, withdrawn): family_name (1), given_name (2), middle_name (3), suffix (4), prefix (5), degree (6), name_type_code (7), name_representation_code (8), name_context (9), name_assembly_order (11), name_effective_date (12), name_expiration_date (13), professional_suffix (14), called_by (15). **CRITICAL**: suffix=comp 4, prefix=comp 5. In XCN these shift by +1 (suffix=5, prefix=6). Use the `_xpn_fields()` helper and `_xpn_schema()` helper for every XPN field to ensure completeness. |
 | XAD | Extended Address | street ^ other ^ city ^ state ^ zip ^ country ^ address type ^ other geographic ^ county ^ census tract ^ address representation | Components: street, other_designation, city, state, zip, country, type |
 | XTN | Extended Telecom Number | telephone ^ telecom use ^ telecom equipment ^ email ^ country code ^ area code ^ local number ^ extension ^ any text | Comp 1 (number) or individual components as needed |
 | XCN | Extended Composite ID & Name | ID ^ family ^ given ^ middle ^ suffix ^ prefix ^ degree ^ source table ^ assigning authority ^ name type ^ check digit ^ check digit scheme ^ identifier type ^ assigning facility | Components: id, family_name, given_name, prefix |
-| XON | Extended Composite Name & ID for Orgs | organization name ^ org name type ^ ID number ^ check digit ^ check digit scheme ^ assigning authority ^ identifier type ^ assigning facility ^ name rep code ^ org identifier | ALL 10: name, type_code, id, check_digit, check_digit_scheme, assigning_authority, id_type_code, assigning_facility, name_rep_code, identifier |
+| XON | Extended Composite Name & ID for Orgs | organization name ^ org name type ^ ID number ^ check digit ^ check digit scheme ^ assigning authority (HD) ^ identifier type ^ assigning facility (HD) ^ name rep code ^ org identifier | ALL 10: name, type_code, id, check_digit, check_digit_scheme, assigning_authority (+ HD sub-components), id_type_code, assigning_facility (+ HD sub-components), name_rep_code, identifier |
 | HD | Hierarchic Designator | namespace ID ^ universal ID ^ universal ID type | ALL 3: namespace_id, universal_id, universal_id_type |
 | EI | Entity Identifier | entity ID ^ namespace ID ^ universal ID ^ universal ID type | ALL 4: entity_id, namespace_id, universal_id, universal_id_type |
 | EIP | Entity Identifier Pair | placer assigned identifier ^ filler assigned identifier | Comp 1 (placer ID) |
@@ -1183,7 +1185,7 @@ For repeating fields (separated by `~`), use `get_rep_component` instead of `get
 
 All HL7 fields are stored as **STRING** in the Delta tables. The connector extracts **all** components from composite types (as documented above) and stores them as individual string columns. No type coercion is performed at ingestion time — downstream SQL queries can cast as needed (e.g. `CAST(date_of_birth AS DATE)`).
 
-Sub-components within components (separated by `&`, e.g., an HD inside an XON) are stored as the raw composite string. Users can split on `&` downstream if needed.
+When a component is itself a composite type (e.g. HD inside CX.4, XON.6, XON.8), the connector extracts sub-components using `get_sub_component` / `get_rep_sub_component` and stores each sub-component as its own column. The raw component value (containing `&` separators) is also preserved for convenience.
 
 ---
 
