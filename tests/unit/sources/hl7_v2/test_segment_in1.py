@@ -17,7 +17,7 @@ class TestIN1Extraction:
     def test_comprehensive_in1(self):
         msg = parse_first(load_sample("sample_adt_comprehensive.hl7"))
         row = extract_segment(msg, "IN1", _extract_in1)
-        assert row["insurance_plan_id"] == "BCBS001"
+        assert row["insurance_plan"] == "BCBS001"
         assert row["insurance_plan_text"] == "Blue Cross Blue Shield"
         assert row["insurance_company_name"] == "Blue Cross Blue Shield of Illinois"
         assert row["group_number"] == "GRP7700"
@@ -28,7 +28,7 @@ class TestIN1Extraction:
     def test_dft_in1(self):
         msg = parse_first(load_sample("sample_dft_financial.hl7"))
         row = extract_segment(msg, "IN1", _extract_in1)
-        assert row["insurance_plan_id"] == "AETNA01"
+        assert row["insurance_plan"] == "AETNA01"
         assert row["plan_type"] == "HMO"
         assert row["group_number"] == "GRP4400"
 
@@ -41,7 +41,7 @@ class TestIN1MissingFields:
         )
         row = _extract_in1(msg.get_segment("IN1"))
         assert row["set_id"] == 1
-        assert row["insurance_plan_id"] is None
+        assert row["insurance_plan"] is None
         assert row["insurance_company_name"] is None
         assert row["group_number"] is None
         assert row["plan_type"] is None
@@ -53,6 +53,6 @@ class TestIN1MissingFields:
             "IN1|1|PLAN001^Basic Plan|COMP001^^^INS"
         )
         row = _extract_in1(msg.get_segment("IN1"))
-        assert row["insurance_plan_id"] == "PLAN001"
+        assert row["insurance_plan"] == "PLAN001"
         assert row["insurance_plan_text"] == "Basic Plan"
-        assert row["insurance_company_id"] == "COMP001"
+        assert row["insurance_company"] == "COMP001"

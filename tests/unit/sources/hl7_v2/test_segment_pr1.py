@@ -21,7 +21,7 @@ class TestPR1Extraction:
         assert row["procedure_text"] == "Dilation of Coronary Artery, Percutaneous Approach"
         assert row["procedure_functional_type"] == "A"
         assert row["procedure_minutes"] == 45
-        assert row["anesthesiologist"] == "ANE001"
+        assert row["anesthesiologist_id"] == "ANE001"
         assert row["procedure_coding_method"] == "ICD10PCS"
 
 
@@ -38,7 +38,7 @@ class TestPR1MissingFields:
         assert row["procedure_text"] is None
         assert row["procedure_functional_type"] is None
         assert row["procedure_minutes"] is None
-        assert row["anesthesiologist"] is None
+        assert row["anesthesiologist_id"] is None
 
     def test_pr1_code_only(self):
         msg = parse_message(
