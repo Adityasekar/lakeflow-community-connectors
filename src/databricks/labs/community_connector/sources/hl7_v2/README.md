@@ -170,20 +170,27 @@ All tables use **append-only** ingestion. HL7 v2 is a messaging protocol — eve
 
 ## Data Type Mapping
 
-All HL7 v2 fields are stored as `STRING`. The connector extracts components from composite types into individual columns. Downstream SQL can cast as needed.
+All HL7 v2 fields are stored as `STRING`. The connector extracts **all** components from composite types into individual columns. Downstream SQL can cast as needed.
 
-| HL7 Data Type | Examples | Databricks Type | Notes |
+| HL7 Data Type | Examples | Databricks Type | Extraction pattern |
 |---|---|---|---|
 | ST, TX, FT, IS, ID | Plain text, coded values | STRING | Stored as-is |
 | NM, SI | Numeric strings | STRING | Cast with `CAST(col AS INT)` as needed |
 | TS, DT, TM | Timestamps, dates, times | STRING | HL7 DTM format; datetime fields like `date_of_birth` are parsed to `TIMESTAMP` |
-| CE, CWE, CNE | Coded elements | STRING | Components extracted: `code`, `text`, `coding_system` |
-| XPN | Person name | STRING | Components: `family_name`, `given_name`, `middle_name` |
-| XAD | Address | STRING | Components: `street`, `city`, `state`, `zip`, `country` |
-| XCN | Composite ID/name | STRING | Components: `id`, `family_name`, `given_name` |
-| CX | Extended composite ID | STRING | Component 1 extracted (ID value) |
-| HD, EI | Hierarchic/entity ID | STRING | Component 1 extracted |
-| PL | Person location | STRING | Components: `point_of_care`, `room`, `bed`, `facility` |
+| CE, CWE, CNE | Coded elements | STRING | All 6 components: `code`, `text`, `coding_system`, `alt_code`, `alt_text`, `alt_coding_system` |
+| XPN | Person name | STRING | Components: `family_name`, `given_name`, `middle_name`, `suffix`, `prefix` |
+| XAD | Address | STRING | Components: `street`, `other_designation`, `city`, `state`, `zip`, `country`, `type` |
+| XCN | Composite ID/name | STRING | Components: `id`, `family_name`, `given_name`, `prefix` |
+| XON | Organization name | STRING | All 10 components: `name`, `type_code`, `id`, `check_digit`, `check_digit_scheme`, `assigning_authority`, `id_type_code`, `assigning_facility`, `name_rep_code`, `identifier` |
+| HD | Hierarchic designator | STRING | All 3 components: `namespace_id`, `universal_id`, `universal_id_type` |
+| EI | Entity identifier | STRING | All 4 components: `entity_id`, `namespace_id`, `universal_id`, `universal_id_type` |
+| CX | Extended composite ID | STRING | Key components: `id_value`, `check_digit`, `assigning_authority`, `type_code` |
+| PL | Person location | STRING | Components: `point_of_care`, `room`, `bed`, `facility`, `status`, `type` |
+
+**Key rules for composite type extraction:**
+- Every component of a composite type gets its own column — do not extract only component 1 and discard the rest.
+- For repeating fields (separated by `~`), use `get_rep_component` (not `get_component`) to avoid the repetition separator bleeding into component values. Only the first repetition is captured; the full value is in `raw_segment`.
+- Sub-components within components (separated by `&`, e.g., HD inside XON) are stored as the raw string. Users can split on `&` downstream if needed.
 
 `set_id` is stored as `BIGINT`. Datetime fields parsed from HL7 DTM format are stored as `TIMESTAMP`.
 

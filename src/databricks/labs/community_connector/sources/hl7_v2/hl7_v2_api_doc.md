@@ -1145,21 +1145,25 @@ HL7 v2 defines its own data types. The connector maps them to Spark SQL types fo
 
 ### Composite Data Types
 
+**IMPORTANT — Extraction Rule:** Every component of a composite data type MUST be extracted into its own column. Do NOT extract only component 1 and discard the rest. The "Connector Extraction" column below lists ALL components that must be captured.
+
+For repeating fields (separated by `~`), use `get_rep_component` instead of `get_component` to prevent the repetition separator from bleeding into component values. Only the first repetition is captured; the full value is preserved in `raw_segment`.
+
 | HL7 Type | Name | Components | Connector Extraction |
 |---|---|---|---|
-| CE | Coded Element | identifier ^ text ^ coding system ^ alt-id ^ alt-text ^ alt-coding-system | Comp 1 (code), Comp 2 (text), Comp 3 (coding system) |
-| CWE | Coded with Exceptions | Same as CE plus additional components | Same as CE |
-| CNE | Coded with No Exceptions | Same as CE plus additional components | Same as CE |
-| CX | Extended Composite ID | ID ^ check digit ^ check digit scheme ^ assigning authority ^ ID type ^ assigning facility ^ effective date ^ expiration date ^ assigning jurisdiction ^ assigning agency | Comp 1 (ID value) |
-| XPN | Extended Person Name | family ^ given ^ middle ^ suffix ^ prefix ^ degree ^ name type | Comp 1 (family), Comp 2 (given) |
-| XAD | Extended Address | street ^ other ^ city ^ state ^ zip ^ country ^ address type ^ other geographic ^ county ^ census tract ^ address representation | Comp 1 (street), Comp 3 (city), Comp 4 (state), Comp 5 (zip) |
-| XTN | Extended Telecom Number | telephone ^ telecom use ^ telecom equipment ^ email ^ country code ^ area code ^ local number ^ extension ^ any text | Comp 1 (number) or individual components |
-| XCN | Extended Composite ID & Name | ID ^ family ^ given ^ middle ^ suffix ^ prefix ^ degree ^ source table ^ assigning authority ^ name type ^ check digit ^ check digit scheme ^ identifier type ^ assigning facility | Comp 1 (ID), Comp 2 (family), Comp 3 (given) |
-| XON | Extended Composite Name & ID for Orgs | organization name ^ organization name type ^ ID number ^ check digit ^ check digit scheme ^ assigning authority ^ identifier type ^ assigning facility | Comp 1 (organization name) |
-| HD | Hierarchic Designator | namespace ID ^ universal ID ^ universal ID type | Comp 1 (namespace ID) |
-| EI | Entity Identifier | entity ID ^ namespace ID ^ universal ID ^ universal ID type | Comp 1 (entity ID) |
+| CE | Coded Element | identifier ^ text ^ coding system ^ alt-id ^ alt-text ^ alt-coding-system | ALL 6: code, text, coding_system, alt_code, alt_text, alt_coding_system |
+| CWE | Coded with Exceptions | Same as CE plus additional components | ALL 6 (same as CE): code, text, coding_system, alt_code, alt_text, alt_coding_system |
+| CNE | Coded with No Exceptions | Same as CE plus additional components | ALL 6 (same as CE): code, text, coding_system, alt_code, alt_text, alt_coding_system |
+| CX | Extended Composite ID | ID ^ check digit ^ check digit scheme ^ assigning authority ^ ID type ^ assigning facility ^ effective date ^ expiration date ^ assigning jurisdiction ^ assigning agency | Key components: id_value, check_digit, assigning_authority, type_code |
+| XPN | Extended Person Name | family ^ given ^ middle ^ suffix ^ prefix ^ degree ^ name type | Components: family_name, given_name, middle_name, suffix, prefix |
+| XAD | Extended Address | street ^ other ^ city ^ state ^ zip ^ country ^ address type ^ other geographic ^ county ^ census tract ^ address representation | Components: street, other_designation, city, state, zip, country, type |
+| XTN | Extended Telecom Number | telephone ^ telecom use ^ telecom equipment ^ email ^ country code ^ area code ^ local number ^ extension ^ any text | Comp 1 (number) or individual components as needed |
+| XCN | Extended Composite ID & Name | ID ^ family ^ given ^ middle ^ suffix ^ prefix ^ degree ^ source table ^ assigning authority ^ name type ^ check digit ^ check digit scheme ^ identifier type ^ assigning facility | Components: id, family_name, given_name, prefix |
+| XON | Extended Composite Name & ID for Orgs | organization name ^ org name type ^ ID number ^ check digit ^ check digit scheme ^ assigning authority ^ identifier type ^ assigning facility ^ name rep code ^ org identifier | ALL 10: name, type_code, id, check_digit, check_digit_scheme, assigning_authority, id_type_code, assigning_facility, name_rep_code, identifier |
+| HD | Hierarchic Designator | namespace ID ^ universal ID ^ universal ID type | ALL 3: namespace_id, universal_id, universal_id_type |
+| EI | Entity Identifier | entity ID ^ namespace ID ^ universal ID ^ universal ID type | ALL 4: entity_id, namespace_id, universal_id, universal_id_type |
 | EIP | Entity Identifier Pair | placer assigned identifier ^ filler assigned identifier | Comp 1 (placer ID) |
-| PL | Person Location | point of care ^ room ^ bed ^ facility ^ location status ^ person location type ^ building ^ floor | Comp 1 (point of care), Comp 2 (room), Comp 3 (bed) |
+| PL | Person Location | point of care ^ room ^ bed ^ facility ^ location status ^ person location type ^ building ^ floor | Components: point_of_care, room, bed, facility, status, type |
 | MSG | Message Type | message code ^ trigger event ^ message structure | Comp 1 (message code), Comp 2 (trigger event) |
 | PT | Processing Type | processing ID ^ processing mode | Comp 1 (processing ID) |
 | VID | Version Identifier | version ID ^ internationalization code ^ international version ID | Comp 1 (version ID) |
@@ -1177,7 +1181,9 @@ HL7 v2 defines its own data types. The connector maps them to Spark SQL types fo
 
 ### General Mapping Rule
 
-All HL7 fields are stored as **STRING** in the Delta tables. The connector extracts specific components from composite types (as documented above) and stores them as individual string columns. No type coercion is performed at ingestion time — downstream SQL queries can cast as needed (e.g. `CAST(date_of_birth AS DATE)`).
+All HL7 fields are stored as **STRING** in the Delta tables. The connector extracts **all** components from composite types (as documented above) and stores them as individual string columns. No type coercion is performed at ingestion time — downstream SQL queries can cast as needed (e.g. `CAST(date_of_birth AS DATE)`).
+
+Sub-components within components (separated by `&`, e.g., an HD inside an XON) are stored as the raw composite string. Users can split on `&` downstream if needed.
 
 ---
 
