@@ -933,10 +933,18 @@ def register_lakeflow_source(spark):
         + [
             _s("field_separator",                  "Field separator character (MSH-1); always '|' per the HL7 standard"),
             _s("encoding_characters",              "Encoding characters (MSH-2): component ^, repetition ~, escape \\, subcomponent &"),
-            _s("sending_application",              "Name/identifier of the application that created the message (MSH-3.1)"),
-            _s("sending_facility",                 "Facility that sent the message (MSH-4.1)"),
-            _s("receiving_application",            "Name/identifier of the intended recipient application (MSH-5.1)"),
-            _s("receiving_facility",               "Facility that will receive the message (MSH-6.1)"),
+            _s("sending_application",                      "Namespace ID of the sending application (MSH-3.1)"),
+            _s("sending_application_universal_id",         "Universal ID (e.g. OID) of the sending application (MSH-3.2)"),
+            _s("sending_application_universal_id_type",    "Type of universal ID for the sending application, e.g. ISO (MSH-3.3)"),
+            _s("sending_facility",                         "Namespace ID of the sending facility (MSH-4.1)"),
+            _s("sending_facility_universal_id",            "Universal ID (e.g. OID) of the sending facility (MSH-4.2)"),
+            _s("sending_facility_universal_id_type",       "Type of universal ID for the sending facility, e.g. ISO (MSH-4.3)"),
+            _s("receiving_application",                    "Namespace ID of the receiving application (MSH-5.1)"),
+            _s("receiving_application_universal_id",       "Universal ID (e.g. OID) of the receiving application (MSH-5.2)"),
+            _s("receiving_application_universal_id_type",  "Type of universal ID for the receiving application, e.g. ISO (MSH-5.3)"),
+            _s("receiving_facility",                       "Namespace ID of the receiving facility (MSH-6.1)"),
+            _s("receiving_facility_universal_id",          "Universal ID (e.g. OID) of the receiving facility (MSH-6.2)"),
+            _s("receiving_facility_universal_id_type",     "Type of universal ID for the receiving facility, e.g. ISO (MSH-6.3)"),
             _ts("message_datetime",                "Date/time the message was created (MSH-7); typed version of message_timestamp"),
             _s("security",                         "Security or access-restriction string (MSH-8); rarely populated"),
             _s("message_code",                     "Message code, first component of message type (MSH-9.1), e.g. ADT, ORU, ORM, ACK"),
@@ -2090,7 +2098,6 @@ def register_lakeflow_source(spark):
     # src/databricks/labs/community_connector/sources/hl7_v2/hl7_v2.py
     ########################################################
 
-    _DEFAULT_MAX_RECORDS = 10_000
     _DEFAULT_WINDOW_SECONDS = 86_400
     _RETRIABLE_STATUS_CODES = (429, 500, 503)
     _MAX_RETRIES = 3
@@ -2196,9 +2203,17 @@ def register_lakeflow_source(spark):
             "field_separator": _v(seg.get_field(1)),
             "encoding_characters": _v(seg.get_field(2)),
             "sending_application": _v(seg.get_component(3, 1)),
+            "sending_application_universal_id": _v(seg.get_component(3, 2)),
+            "sending_application_universal_id_type": _v(seg.get_component(3, 3)),
             "sending_facility": _v(seg.get_component(4, 1)),
+            "sending_facility_universal_id": _v(seg.get_component(4, 2)),
+            "sending_facility_universal_id_type": _v(seg.get_component(4, 3)),
             "receiving_application": _v(seg.get_component(5, 1)),
+            "receiving_application_universal_id": _v(seg.get_component(5, 2)),
+            "receiving_application_universal_id_type": _v(seg.get_component(5, 3)),
             "receiving_facility": _v(seg.get_component(6, 1)),
+            "receiving_facility_universal_id": _v(seg.get_component(6, 2)),
+            "receiving_facility_universal_id_type": _v(seg.get_component(6, 3)),
             "message_datetime": _parse_dtm(seg.get_field(7)),
             "security": _v(seg.get_field(8)),
             "message_code": _v(seg.get_component(9, 1)),
@@ -2215,10 +2230,10 @@ def register_lakeflow_source(spark):
             "character_set": _v(seg.get_field(18)),
             "principal_language": _v(seg.get_component(19, 1)),
             "alt_character_set_handling": _v(seg.get_field(20)),
-            "message_profile_identifier": _v(seg.get_component(21, 1)),
-            "message_profile_namespace_id": _v(seg.get_component(21, 2)),
-            "message_profile_universal_id": _v(seg.get_component(21, 3)),
-            "message_profile_universal_id_type": _v(seg.get_component(21, 4)),
+            "message_profile_identifier": _v(seg.get_rep_component(21, 1, 1)),
+            "message_profile_namespace_id": _v(seg.get_rep_component(21, 1, 2)),
+            "message_profile_universal_id": _v(seg.get_rep_component(21, 1, 3)),
+            "message_profile_universal_id_type": _v(seg.get_rep_component(21, 1, 4)),
             "sending_responsible_org": _v(seg.get_component(22, 1)),
             "receiving_responsible_org": _v(seg.get_component(23, 1)),
             "sending_network_address": _v(seg.get_component(24, 1)),
@@ -3265,11 +3280,13 @@ def register_lakeflow_source(spark):
 
         Delta mode connection options:
             delta_table_name (fully-qualified catalog.schema.table)
+            delta_query_mode (str): ``"preload"`` (default) loads the entire table
+                into memory at init — fast for small tables.  ``"per_window"``
+                issues a live SQL query per micro-batch window — scales to
+                arbitrarily large tables with no memory overhead.
 
         Table options (both modes):
             segment_type (str): Override segment type for custom/Z-segments.
-            max_records_per_batch (str): Best-effort cap on records per micro-batch
-                (default 10000).  The sliding window may yield more.
             window_seconds (str): Duration of the sliding time-window in seconds
                 (default 86400).  Smaller values produce smaller batches.
             start_timestamp (str): RFC3339 timestamp to start reading from when no
@@ -3330,9 +3347,22 @@ def register_lakeflow_source(spark):
             self._dbx_host = options["databricks_host"]
             self._dbx_token = options["databricks_token"]
             self._sql_warehouse_id = options["sql_warehouse_id"]
-            self._delta_cache: list[dict] | None = None
-            self._delta_preload_error: str | None = None
-            self._preload_delta()
+            self._delta_query_mode = options.get("delta_query_mode", "preload").lower()
+
+            if self._delta_query_mode == "per_window":
+                self._delta_cache = None
+                self._delta_preload_error = None
+                self._ws_client = self._create_workspace_client()
+            elif self._delta_query_mode == "preload":
+                self._ws_client = None
+                self._delta_cache: list[dict] | None = None
+                self._delta_preload_error: str | None = None
+                self._preload_delta()
+            else:
+                raise ValueError(
+                    f"Unsupported delta_query_mode '{self._delta_query_mode}'. "
+                    "Must be 'preload' (default) or 'per_window'."
+                )
 
         @staticmethod
         def _parse_service_account_json(raw: str | dict) -> dict:
@@ -3436,11 +3466,16 @@ def register_lakeflow_source(spark):
         def read_table_metadata(self, table_name: str, table_options: dict[str, str]) -> dict:
             self._validate_table(table_name, table_options)
             segment_type = table_options.get("segment_type", table_name).lower()
+            is_known = segment_type in SEGMENT_SCHEMAS
             is_single = segment_type in _SINGLE_SEGMENT_TABLES
+            if is_known and not is_single:
+                pks = ["message_id", "set_id"]
+            else:
+                pks = ["message_id"]
             return {
                 "ingestion_type": "append",
                 "cursor_field": "send_time",
-                "primary_keys": ["message_id"] if is_single else ["message_id", "set_id"],
+                "primary_keys": pks,
                 "description": TABLE_DESCRIPTIONS.get(segment_type, ""),
             }
 
@@ -3561,6 +3596,26 @@ def register_lakeflow_source(spark):
 
             return messages
 
+        def _create_workspace_client(self):
+            from databricks.sdk import WorkspaceClient
+            return WorkspaceClient(host=self._dbx_host, token=self._dbx_token)
+
+        def _execute_delta_sql(self, stmt: str) -> list[list[str]]:
+            """Execute a SQL statement against the Delta table via the Statement Execution API.
+
+            Returns the raw ``data_array`` (list of rows, each row a list of strings).
+            """
+            w = self._ws_client or self._create_workspace_client()
+            result = w.statement_execution.execute_statement(
+                warehouse_id=self._sql_warehouse_id,
+                statement=stmt,
+                wait_timeout="50s",
+            )
+            while result.status and result.status.state.value in ("PENDING", "RUNNING"):
+                time.sleep(1)
+                result = w.statement_execution.get_statement(result.statement_id)
+            return result.result.data_array or []
+
         def _preload_delta(self) -> None:
             """Pre-load Delta table data via the Databricks SQL Statement Execution API.
 
@@ -3570,11 +3625,7 @@ def register_lakeflow_source(spark):
             connection parameters — the same pattern used by the GCP mode with
             ``service_account_json``.
             """
-            from databricks.sdk import WorkspaceClient
-
             try:
-                w = WorkspaceClient(host=self._dbx_host, token=self._dbx_token)
-
                 stmt = (
                     f"SELECT data, "
                     f"date_format(sendTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") AS sendTime, "
@@ -3582,34 +3633,33 @@ def register_lakeflow_source(spark):
                     f"FROM {self._delta_table} "
                     f"ORDER BY sendTime"
                 )
-                result = w.statement_execution.execute_statement(
-                    warehouse_id=self._sql_warehouse_id,
-                    statement=stmt,
-                    wait_timeout="50s",
-                )
-
-                while result.status and result.status.state.value in ("PENDING", "RUNNING"):
-                    time.sleep(1)
-                    result = w.statement_execution.get_statement(result.statement_id)
-
-                self._delta_cache = []
-                for row in (result.result.data_array or []):
-                    self._delta_cache.append({
+                data_array = self._execute_delta_sql(stmt)
+                rows = []
+                for row in data_array:
+                    rows.append({
                         "data": row[0] or "",
                         "sendTime": row[1] or "",
                         "name": row[2] if len(row) > 2 else "",
                     })
+                self._delta_cache = rows
             except Exception as exc:
+                self._delta_cache = None
                 self._delta_preload_error = f"{type(exc).__name__}: {exc}"
                 return
 
         def _fetch_messages_from_delta(self, since: str, until: str) -> list[dict]:
-            """Fetch messages from the pre-loaded Delta cache with sendTime in (since, until].
+            """Fetch messages with sendTime in (since, until].
+
+            In ``preload`` mode, filters the in-memory cache.
+            In ``per_window`` mode, issues a live SQL query scoped to the window.
 
             Returns a list of dicts with the same shape as the GCP API response
             (keys: ``data``, ``sendTime``, ``name``) so that ``_parse_api_messages``
             works unchanged.
             """
+            if self._delta_query_mode == "per_window":
+                return self._fetch_messages_from_delta_live(since, until)
+
             if self._delta_cache is None:
                 raise RuntimeError(
                     f"Delta cache was not populated. "
@@ -3622,8 +3672,36 @@ def register_lakeflow_source(spark):
                 if since < str(row.get("sendTime", "")) <= until
             ]
 
+        def _fetch_messages_from_delta_live(self, since: str, until: str) -> list[dict]:
+            """Issue a live SQL query for messages in (since, until]."""
+            stmt = (
+                f"SELECT data, "
+                f"date_format(sendTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") AS sendTime, "
+                f"name "
+                f"FROM {self._delta_table} "
+                f"WHERE date_format(sendTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") > '{since}' "
+                f"  AND date_format(sendTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") <= '{until}' "
+                f"ORDER BY sendTime"
+            )
+            data_array = self._execute_delta_sql(stmt)
+            return [
+                {
+                    "data": row[0] or "",
+                    "sendTime": row[1] or "",
+                    "name": row[2] if len(row) > 2 else "",
+                }
+                for row in data_array
+            ]
+
         def _peek_oldest_send_time_delta(self) -> str | None:
-            """Return the earliest sendTime from the pre-loaded Delta cache."""
+            """Return the earliest sendTime from the Delta table.
+
+            In ``preload`` mode, reads from the in-memory cache.
+            In ``per_window`` mode, issues a ``SELECT MIN(sendTime)`` query.
+            """
+            if self._delta_query_mode == "per_window":
+                return self._peek_oldest_send_time_delta_live()
+
             if not self._delta_cache:
                 return None
 
@@ -3631,6 +3709,21 @@ def register_lakeflow_source(spark):
             if not first_ts:
                 return None
 
+            dt = datetime.fromisoformat(first_ts.replace("Z", "+00:00"))
+            dt -= timedelta(seconds=1)
+            return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        def _peek_oldest_send_time_delta_live(self) -> str | None:
+            """Discover the earliest sendTime via a live SQL query."""
+            stmt = (
+                f"SELECT date_format(MIN(sendTime), \"yyyy-MM-dd'T'HH:mm:ss'Z'\") "
+                f"FROM {self._delta_table}"
+            )
+            data_array = self._execute_delta_sql(stmt)
+            if not data_array or not data_array[0] or not data_array[0][0]:
+                return None
+
+            first_ts = data_array[0][0]
             dt = datetime.fromisoformat(first_ts.replace("Z", "+00:00"))
             dt -= timedelta(seconds=1)
             return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
