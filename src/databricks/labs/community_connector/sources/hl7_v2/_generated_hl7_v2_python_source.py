@@ -4201,6 +4201,11 @@ def register_lakeflow_source(spark):
             if not since:
                 since = self._peek_oldest_send_time()
             if not since:
+                print(
+                    f"[HL7v2] read_table({table_name}): no start cursor resolved "
+                    f"(start_offset={start_offset}, source_type={self._source_type}). "
+                    f"Returning empty."
+                )
                 return iter([]), start_offset or {}
 
             if since >= self._init_ts:
@@ -4314,6 +4319,19 @@ def register_lakeflow_source(spark):
             while result.status and result.status.state.value in ("PENDING", "RUNNING"):
                 time.sleep(1)
                 result = w.statement_execution.get_statement(result.statement_id)
+
+            state = getattr(getattr(result, "status", None), "state", None)
+            if state and state.value not in ("SUCCEEDED",):
+                error_msg = getattr(getattr(result, "status", None), "error", None)
+                raise RuntimeError(
+                    f"Delta SQL statement ended in state '{state.value}'. "
+                    f"Error: {error_msg}. Statement: {stmt[:200]}"
+                )
+            if result.result is None:
+                raise RuntimeError(
+                    f"Delta SQL statement returned no result object. "
+                    f"State: {state}. Statement: {stmt[:200]}"
+                )
             return result.result.data_array or []
 
         def _preload_delta(self) -> None:
@@ -4342,10 +4360,26 @@ def register_lakeflow_source(spark):
                         "name": row[2] if len(row) > 2 else "",
                     })
                 self._delta_cache = rows
+                print(
+                    f"[HL7v2 Delta] Preloaded {len(rows)} message(s) from "
+                    f"{self._delta_table}"
+                )
             except Exception as exc:
                 self._delta_cache = None
                 self._delta_preload_error = f"{type(exc).__name__}: {exc}"
-                return
+                print(
+                    f"[HL7v2 Delta] ERROR — _preload_delta failed for "
+                    f"table={self._delta_table}, "
+                    f"host={self._dbx_host}, "
+                    f"warehouse={self._sql_warehouse_id}: "
+                    f"{self._delta_preload_error}"
+                )
+                raise RuntimeError(
+                    f"Failed to preload Delta table '{self._delta_table}'. "
+                    f"Verify that 'databricks_host', 'databricks_token', and "
+                    f"'sql_warehouse_id' in the connection are valid and the token "
+                    f"has not expired. Error: {self._delta_preload_error}"
+                ) from exc
 
         def _fetch_messages_from_delta(self, since: str, until: str) -> list[dict]:
             """Fetch messages with sendTime in (since, until].
@@ -4402,7 +4436,17 @@ def register_lakeflow_source(spark):
             if self._delta_query_mode == "per_window":
                 return self._peek_oldest_send_time_delta_live()
 
-            if not self._delta_cache:
+            if self._delta_cache is None:
+                print(
+                    f"[HL7v2 Delta] _peek_oldest_send_time_delta: cache is None. "
+                    f"Preload error: {self._delta_preload_error}"
+                )
+                return None
+            if len(self._delta_cache) == 0:
+                print(
+                    f"[HL7v2 Delta] _peek_oldest_send_time_delta: cache is empty "
+                    f"(0 rows returned from {self._delta_table})"
+                )
                 return None
 
             first_ts = str(self._delta_cache[0].get("sendTime", ""))
