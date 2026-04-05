@@ -56,7 +56,7 @@ class TestNK1MissingFields:
         assert row["nk_family_name"] is None
         assert row["nk_given_name"] is None
         assert row["relationship_code"] is None
-        assert row["phone_number"] is None
+        assert row["phone_number_number"] is None
         assert row["administrative_sex"] is None
 
     def test_nk1_name_only(self):

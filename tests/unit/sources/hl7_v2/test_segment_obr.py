@@ -17,7 +17,7 @@ class TestOBRExtraction:
     def test_oru_obr(self):
         msg = parse_first(load_sample("sample_oru.hl7"))
         row = extract_segment(msg, "OBR", _extract_obr)
-        assert row["service_id"] == "80048"
+        assert row["service"] == "80048"
         assert row["service_text"] == "Basic Metabolic Panel"
         assert row["result_status"] == "F"
 
@@ -26,14 +26,14 @@ class TestOBRExtraction:
         segs = segments_of_type(msg, "OBR")
         assert len(segs) == 2
         row1 = _extract_obr(segs[0])
-        assert row1["service_id"] == "PERSUBJ"
+        assert row1["service"] == "PERSUBJ"
         row2 = _extract_obr(segs[1])
-        assert row2["service_id"] == "NOTF"
+        assert row2["service"] == "NOTF"
 
     def test_celr_obr(self):
         msg = parse_first(load_sample("sample_oru_lab_celr.hl7"))
         row = extract_segment(msg, "OBR", _extract_obr)
-        assert row["service_id"] == "68991-9"
+        assert row["service"] == "68991-9"
         assert row["diagnostic_service_section_id"] == "LAB"
 
 
@@ -45,7 +45,7 @@ class TestOBRMissingFields:
         )
         row = _extract_obr(msg.get_segment("OBR"))
         assert row["set_id"] == 1
-        assert row["service_id"] is None
+        assert row["service"] is None
         assert row["service_text"] is None
         assert row["result_status"] is None
         assert row["ordering_provider_id"] is None
@@ -57,7 +57,7 @@ class TestOBRMissingFields:
             "OBR|1||FIL001|CBC^Complete Blood Count^LN"
         )
         row = _extract_obr(msg.get_segment("OBR"))
-        assert row["service_id"] == "CBC"
+        assert row["service"] == "CBC"
         assert row["service_text"] == "Complete Blood Count"
         assert row["service_coding_system"] == "LN"
         assert row["filler_order_number"] == "FIL001"

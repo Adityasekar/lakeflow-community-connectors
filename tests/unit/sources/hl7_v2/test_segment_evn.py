@@ -43,6 +43,6 @@ class TestEVNMissingFields:
         assert row["recorded_datetime"] is not None
         assert row["operator_id"] is None
         assert row["date_time_planned_event"] is None
-        assert row["event_reason_code"] is None
+        assert row["event_reason"] is None
         assert row["event_occurred"] is None
         assert row["event_facility"] is None

@@ -31,7 +31,7 @@ class TestMRGMissingFields:
         assert row["prior_patient_id"] == "OLD001"
         assert row["prior_alternate_patient_id"] is None
         assert row["prior_patient_account_number"] is None
-        assert row["prior_patient_name"] is None
+        assert row["prior_patient_family_name"] is None
 
     def test_mrg_all_empty(self):
         msg = parse_message(

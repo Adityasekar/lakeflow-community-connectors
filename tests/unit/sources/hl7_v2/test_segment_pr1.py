@@ -17,8 +17,8 @@ class TestPR1Extraction:
     def test_comprehensive_pr1(self):
         msg = parse_first(load_sample("sample_adt_comprehensive.hl7"))
         row = extract_segment(msg, "PR1", _extract_pr1)
-        assert row["procedure_id"] == "02703ZZ"
-        assert row["procedure_text"] == "Dilation of Coronary Artery, Percutaneous Approach"
+        assert row["procedure_code"] == "02703ZZ"
+        assert row["procedure_code_text"] == "Dilation of Coronary Artery, Percutaneous Approach"
         assert row["procedure_functional_type"] == "A"
         assert row["procedure_minutes"] == 45
         assert row["anesthesiologist_id"] == "ANE001"
@@ -34,8 +34,8 @@ class TestPR1MissingFields:
         row = _extract_pr1(msg.get_segment("PR1"))
         assert row["set_id"] == 1
         assert row["procedure_coding_method"] is None
-        assert row["procedure_id"] is None
-        assert row["procedure_text"] is None
+        assert row["procedure_code"] is None
+        assert row["procedure_code_text"] is None
         assert row["procedure_functional_type"] is None
         assert row["procedure_minutes"] is None
         assert row["anesthesiologist_id"] is None
@@ -47,6 +47,6 @@ class TestPR1MissingFields:
         )
         row = _extract_pr1(msg.get_segment("PR1"))
         assert row["procedure_coding_method"] == "CPT"
-        assert row["procedure_id"] == "99213"
-        assert row["procedure_text"] == "Office Visit"
-        assert row["procedure_coding_system"] == "CPT4"
+        assert row["procedure_code"] == "99213"
+        assert row["procedure_code_text"] == "Office Visit"
+        assert row["procedure_code_coding_system"] == "CPT4"

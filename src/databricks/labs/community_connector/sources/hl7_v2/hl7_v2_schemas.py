@@ -111,14 +111,17 @@ def _xcn_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
 
 
 def _cwe_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
-    """CWE (Coded With Exceptions) — 6 component fields."""
+    """CWE (Coded With Exceptions) — 9 active component fields (10-22 are OID/value-set metadata, rarely populated)."""
     return [
-        _s(f"{prefix}",                    f"{label} code ({field_ref}.1)"),
-        _s(f"{prefix}_text",               f"{label} text ({field_ref}.2)"),
-        _s(f"{prefix}_coding_system",      f"{label} coding system ({field_ref}.3)"),
-        _s(f"{prefix}_alt_code",           f"{label} alternate code ({field_ref}.4)"),
-        _s(f"{prefix}_alt_text",           f"{label} alternate text ({field_ref}.5)"),
-        _s(f"{prefix}_alt_coding_system",  f"{label} alternate coding system ({field_ref}.6)"),
+        _s(f"{prefix}",                           f"{label} code ({field_ref}.1)"),
+        _s(f"{prefix}_text",                      f"{label} text ({field_ref}.2)"),
+        _s(f"{prefix}_coding_system",             f"{label} coding system ({field_ref}.3, Table 0396)"),
+        _s(f"{prefix}_alt_code",                  f"{label} alternate code ({field_ref}.4)"),
+        _s(f"{prefix}_alt_text",                  f"{label} alternate text ({field_ref}.5)"),
+        _s(f"{prefix}_alt_coding_system",         f"{label} alternate coding system ({field_ref}.6, Table 0396)"),
+        _s(f"{prefix}_coding_system_version",     f"{label} coding system version ID ({field_ref}.7)"),
+        _s(f"{prefix}_alt_coding_system_version", f"{label} alternate coding system version ID ({field_ref}.8)"),
+        _s(f"{prefix}_original_text",             f"{label} original text ({field_ref}.9)"),
     ]
 
 
@@ -162,7 +165,7 @@ def _xon_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
 
 
 def _cx_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
-    """CX (Extended Composite ID with Check Digit) — 10 components + HD sub-components."""
+    """CX (Extended Composite ID with Check Digit) — 12 components + HD sub-components."""
     return [
         _s(f"{prefix}",                                         f"{label} ID ({field_ref}.1)"),
         _s(f"{prefix}_check_digit",                              f"{label} check digit ({field_ref}.2)"),
@@ -178,6 +181,68 @@ def _cx_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
         _s(f"{prefix}_expiration_date",                          f"{label} expiration date ({field_ref}.8)"),
         _s(f"{prefix}_assigning_jurisdiction",                   f"{label} assigning jurisdiction ({field_ref}.9)"),
         _s(f"{prefix}_assigning_agency",                         f"{label} assigning agency ({field_ref}.10)"),
+        _s(f"{prefix}_security_check",                           f"{label} security check ({field_ref}.11)"),
+        _s(f"{prefix}_security_check_scheme",                    f"{label} security check scheme ({field_ref}.12, Table 0904)"),
+    ]
+
+
+def _xtn_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
+    """XTN (Extended Telecommunication Number) — 18 component fields."""
+    return [
+        _s(f"{prefix}_number",                  f"{label} telephone number, formatted ({field_ref}.1, deprecated but widely used)"),
+        _s(f"{prefix}_use_code",                f"{label} use code: PRN=Primary, WPN=Work, ORN=Other ({field_ref}.2, Table 0201)"),
+        _s(f"{prefix}_equipment_type",          f"{label} equipment type: PH=Phone, FX=Fax, CP=Cell, Internet=Email ({field_ref}.3, Table 0202)"),
+        _s(f"{prefix}_communication_address",   f"{label} communication address, e.g. email or URL ({field_ref}.4)"),
+        _s(f"{prefix}_country_code",            f"{label} country code ({field_ref}.5)"),
+        _s(f"{prefix}_area_code",               f"{label} area/city code ({field_ref}.6)"),
+        _s(f"{prefix}_local_number",            f"{label} local number ({field_ref}.7)"),
+        _s(f"{prefix}_extension",               f"{label} extension ({field_ref}.8)"),
+        _s(f"{prefix}_any_text",                f"{label} any text / comments ({field_ref}.9)"),
+        _s(f"{prefix}_extension_prefix",        f"{label} extension prefix ({field_ref}.10)"),
+        _s(f"{prefix}_speed_dial_code",         f"{label} speed dial code ({field_ref}.11)"),
+        _s(f"{prefix}_unformatted_number",      f"{label} unformatted telephone number ({field_ref}.12)"),
+        _s(f"{prefix}_effective_start_date",    f"{label} effective start date ({field_ref}.13, DTM)"),
+        _s(f"{prefix}_expiration_date",         f"{label} expiration date ({field_ref}.14, DTM)"),
+        _s(f"{prefix}_expiration_reason",       f"{label} expiration reason code ({field_ref}.15.1, CWE)"),
+        _s(f"{prefix}_protection_code",         f"{label} protection code ({field_ref}.16.1, CWE)"),
+        _s(f"{prefix}_shared_telecom_id",       f"{label} shared telecommunication identifier ({field_ref}.17.1, EI)"),
+        _s(f"{prefix}_preference_order",        f"{label} preference order ({field_ref}.18, NM)"),
+    ]
+
+
+def _xad_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
+    """XAD (Extended Address) — 23 components (12 is deprecated/skipped)."""
+    return [
+        _s(f"{prefix}_street",                             f"{label} street address line 1 ({field_ref}.1, SAD)"),
+        _s(f"{prefix}_other_designation",                  f"{label} address line 2, apartment or suite ({field_ref}.2)"),
+        _s(f"{prefix}_city",                               f"{label} city or municipality ({field_ref}.3)"),
+        _s(f"{prefix}_state",                              f"{label} state, province, or region ({field_ref}.4)"),
+        _s(f"{prefix}_zip",                                f"{label} postal or ZIP code ({field_ref}.5)"),
+        _s(f"{prefix}_country",                            f"{label} ISO 3166 country code ({field_ref}.6, Table 0399)"),
+        _s(f"{prefix}_type",                               f"{label} address type: H=Home, B=Business, M=Mailing, C=Current ({field_ref}.7, Table 0190)"),
+        _s(f"{prefix}_other_geographic",                   f"{label} other geographic designation, e.g. neighbourhood ({field_ref}.8)"),
+        _s(f"{prefix}_county_parish_code",                 f"{label} county/parish FIPS code ({field_ref}.9.1, CWE, Table 0289)"),
+        _s(f"{prefix}_county_parish_text",                 f"{label} county/parish name ({field_ref}.9.2)"),
+        _s(f"{prefix}_county_parish_coding_system",        f"{label} county/parish coding system ({field_ref}.9.3)"),
+        _s(f"{prefix}_census_tract",                       f"{label} census tract code ({field_ref}.10.1, CWE, Table 0288)"),
+        _s(f"{prefix}_census_tract_text",                  f"{label} census tract description ({field_ref}.10.2)"),
+        _s(f"{prefix}_census_tract_coding_system",         f"{label} census tract coding system ({field_ref}.10.3)"),
+        _s(f"{prefix}_representation_code",                f"{label} address representation code ({field_ref}.11, Table 0465)"),
+        _s(f"{prefix}_effective_date",                     f"{label} address effective date ({field_ref}.13, DTM)"),
+        _s(f"{prefix}_expiration_date",                    f"{label} address expiration date ({field_ref}.14, DTM)"),
+        _s(f"{prefix}_expiration_reason",                  f"{label} expiration reason code ({field_ref}.15.1, CWE, Table 0616)"),
+        _s(f"{prefix}_expiration_reason_text",             f"{label} expiration reason text ({field_ref}.15.2)"),
+        _s(f"{prefix}_expiration_reason_coding_system",    f"{label} expiration reason coding system ({field_ref}.15.3)"),
+        _s(f"{prefix}_temporary_indicator",                f"{label} temporary indicator: Y/N ({field_ref}.16, Table 0136)"),
+        _s(f"{prefix}_bad_address_indicator",              f"{label} bad address indicator: Y/N ({field_ref}.17, Table 0136)"),
+        _s(f"{prefix}_usage",                              f"{label} address usage ({field_ref}.18, Table 0617)"),
+        _s(f"{prefix}_addressee",                          f"{label} addressee ({field_ref}.19)"),
+        _s(f"{prefix}_comment",                            f"{label} address comment ({field_ref}.20)"),
+        _s(f"{prefix}_preference_order",                   f"{label} preference order ({field_ref}.21, NM)"),
+        _s(f"{prefix}_protection_code",                    f"{label} protection code ({field_ref}.22.1, CWE, Table 0618)"),
+        _s(f"{prefix}_protection_code_text",               f"{label} protection code text ({field_ref}.22.2)"),
+        _s(f"{prefix}_protection_code_coding_system",      f"{label} protection code coding system ({field_ref}.22.3)"),
+        _s(f"{prefix}_identifier",                         f"{label} address identifier ({field_ref}.23.1, EI)"),
     ]
 
 
@@ -352,52 +417,14 @@ MSH_SCHEMA = StructType(
         _s("message_profile_namespace_id",     "Namespace ID of the conformance profile (MSH-21.2)"),
         _s("message_profile_universal_id",     "Universal ID (e.g. OID) of the conformance profile (MSH-21.3)"),
         _s("message_profile_universal_id_type","Type of universal ID for the profile, e.g. ISO (MSH-21.4)"),
-        _s("sending_responsible_org",                              "Organization name (MSH-22.1, XON, v2.7+)"),
-        _s("sending_responsible_org_type_code",                    "Organization name type code (MSH-22.2, CWE)"),
-        _s("sending_responsible_org_id",                           "ID number (MSH-22.3)"),
-        _s("sending_responsible_org_check_digit",                  "Identifier check digit (MSH-22.4)"),
-        _s("sending_responsible_org_check_digit_scheme",           "Check digit scheme (MSH-22.5)"),
-        _s("sending_responsible_org_assigning_authority",          "Assigning authority namespace ID (MSH-22.6.1, HD)"),
-        _s("sending_responsible_org_assigning_authority_universal_id","Assigning authority universal ID (MSH-22.6.2)"),
-        _s("sending_responsible_org_assigning_authority_universal_id_type","Assigning authority universal ID type (MSH-22.6.3)"),
-        _s("sending_responsible_org_id_type_code",                 "Identifier type code (MSH-22.7)"),
-        _s("sending_responsible_org_assigning_facility",           "Assigning facility namespace ID (MSH-22.8.1, HD)"),
-        _s("sending_responsible_org_assigning_facility_universal_id","Assigning facility universal ID (MSH-22.8.2)"),
-        _s("sending_responsible_org_assigning_facility_universal_id_type","Assigning facility universal ID type (MSH-22.8.3)"),
-        _s("sending_responsible_org_name_rep_code",                "Name representation code (MSH-22.9)"),
-        _s("sending_responsible_org_identifier",                   "Organization identifier (MSH-22.10)"),
-        _s("receiving_responsible_org",                            "Organization name (MSH-23.1, XON, v2.7+)"),
-        _s("receiving_responsible_org_type_code",                  "Organization name type code (MSH-23.2, CWE)"),
-        _s("receiving_responsible_org_id",                         "ID number (MSH-23.3)"),
-        _s("receiving_responsible_org_check_digit",                "Identifier check digit (MSH-23.4)"),
-        _s("receiving_responsible_org_check_digit_scheme",         "Check digit scheme (MSH-23.5)"),
-        _s("receiving_responsible_org_assigning_authority",        "Assigning authority namespace ID (MSH-23.6.1, HD)"),
-        _s("receiving_responsible_org_assigning_authority_universal_id","Assigning authority universal ID (MSH-23.6.2)"),
-        _s("receiving_responsible_org_assigning_authority_universal_id_type","Assigning authority universal ID type (MSH-23.6.3)"),
-        _s("receiving_responsible_org_id_type_code",               "Identifier type code (MSH-23.7)"),
-        _s("receiving_responsible_org_assigning_facility",         "Assigning facility namespace ID (MSH-23.8.1, HD)"),
-        _s("receiving_responsible_org_assigning_facility_universal_id","Assigning facility universal ID (MSH-23.8.2)"),
-        _s("receiving_responsible_org_assigning_facility_universal_id_type","Assigning facility universal ID type (MSH-23.8.3)"),
-        _s("receiving_responsible_org_name_rep_code",              "Name representation code (MSH-23.9)"),
-        _s("receiving_responsible_org_identifier",                 "Organization identifier (MSH-23.10)"),
-        _s("sending_network_address",                              "Namespace ID of the sending network address (MSH-24.1, HD, v2.7+)"),
-        _s("sending_network_address_universal_id",                 "Universal ID of the sending network address (MSH-24.2)"),
-        _s("sending_network_address_universal_id_type",            "Type of universal ID for sending network, e.g. ISO (MSH-24.3)"),
-        _s("receiving_network_address",                            "Namespace ID of the receiving network address (MSH-25.1, HD, v2.7+)"),
-        _s("receiving_network_address_universal_id",               "Universal ID of the receiving network address (MSH-25.2)"),
-        _s("receiving_network_address_universal_id_type",          "Type of universal ID for receiving network, e.g. ISO (MSH-25.3)"),
-        _s("security_classification_tag",                          "Security classification code (MSH-26.1, CWE, v2.7.1+)"),
-        _s("security_classification_tag_text",                     "Security classification text (MSH-26.2)"),
-        _s("security_classification_tag_coding_system",            "Security classification coding system (MSH-26.3)"),
-        _s("security_classification_tag_alt_code",                 "Alternate security classification code (MSH-26.4)"),
-        _s("security_classification_tag_alt_text",                 "Alternate security classification text (MSH-26.5)"),
-        _s("security_classification_tag_alt_coding_system",        "Alternate security classification coding system (MSH-26.6)"),
-        _s("security_handling_instructions",                       "Security handling instruction code (MSH-27.1, CWE repeating, v2.7.1+)"),
-        _s("security_handling_instructions_text",                  "Security handling instruction text (MSH-27.2)"),
-        _s("security_handling_instructions_coding_system",         "Security handling instruction coding system (MSH-27.3)"),
-        _s("security_handling_instructions_alt_code",              "Alternate security handling instruction code (MSH-27.4)"),
-        _s("security_handling_instructions_alt_text",              "Alternate security handling instruction text (MSH-27.5)"),
-        _s("security_handling_instructions_alt_coding_system",     "Alternate security handling instruction coding system (MSH-27.6)"),
+    ]
+    + _xon_schema("sending_responsible_org", "Sending responsible organization", "MSH-22")
+    + _xon_schema("receiving_responsible_org", "Receiving responsible organization", "MSH-23")
+    + _hd_schema("sending_network_address", "Sending network address", "MSH-24")
+    + _hd_schema("receiving_network_address", "Receiving network address", "MSH-25")
+    + _cwe_schema("security_classification_tag", "Security classification", "MSH-26")
+    + _cwe_schema("security_handling_instructions", "Security handling instructions (first repetition)", "MSH-27")
+    + [
         _s("special_access_restriction",                           "Special access restriction instructions (MSH-28, ST, v2.7.1+)"),
     ]
 )
@@ -410,130 +437,45 @@ PID_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
         _i("set_id",                        "Sequence number when multiple PID segments appear in a message (PID-1)"),
-        _s("patient_id",                    "External patient ID from a prior system (PID-2, deprecated in v2.7)"),
-        _s("patient_identifier_list",       "Full composite list of patient identifiers (PID-3), raw; use patient_id_value for MRN"),
-        _s("patient_id_value",              "Primary patient identifier value, typically the Medical Record Number (PID-3.1)"),
-        _s("patient_id_check_digit",        "Check digit computed for the patient identifier (PID-3.2)"),
-        _s("patient_id_check_digit_scheme", "Algorithm used to compute the check digit, e.g. M10, M11 (PID-3.3)"),
-        _s("patient_id_assigning_authority","Assigning authority namespace ID — facility or system that assigned the patient identifier (PID-3.4.1)"),
-        _s("patient_id_assigning_authority_universal_id","Assigning authority universal ID, e.g. OID (PID-3.4.2)"),
-        _s("patient_id_assigning_authority_universal_id_type","Type of assigning authority universal ID, e.g. ISO (PID-3.4.3)"),
-        _s("patient_id_type_code",          "Type of patient identifier, e.g. MR=Medical Record, PI=Patient Internal (PID-3.5)"),
+        _s("patient_external_id",           "External patient ID from a prior system (PID-2, deprecated in v2.7)"),
+        *_cx_schema("patient_id", "Patient identifier", "PID-3"),
         _s("alternate_patient_id",          "Alternate patient identifier from a prior system (PID-4, deprecated in v2.7)"),
-        _s("patient_name",                  "Full patient name composite (PID-5), raw; use patient_name_* fields"),
         *_xpn_schema("patient_name", "Patient", "PID-5"),
-        _s("mothers_maiden_name",           "Mother's maiden name composite (PID-6), raw; use mothers_maiden_* fields"),
         *_xpn_schema("mothers_maiden", "Mother's maiden", "PID-6"),
         _ts("date_of_birth",                "Date of birth parsed to timestamp (PID-7)"),
-        _s("administrative_sex",            "Administrative gender code (PID-8): M=Male, F=Female, O=Other, U=Unknown"),
+        *_cwe_schema("administrative_sex", "Administrative sex", "PID-8"),
         _s("patient_alias",                 "Alias name(s) for the patient (PID-9, deprecated in v2.7)"),
-        _s("race",                          "Race category code per HL7 table 0005 (PID-10.1)"),
-        _s("race_text",                     "Human-readable race description (PID-10.2)"),
-        _s("race_coding_system",            "Coding system for the race code, e.g. CDCREC, HL70005 (PID-10.3)"),
-        _s("race_alt_code",                 "Alternate race code from a secondary coding system (PID-10.4)"),
-        _s("race_alt_text",                 "Alternate race description from the secondary coding system (PID-10.5)"),
-        _s("race_alt_coding_system",        "Secondary coding system for the race code (PID-10.6)"),
-        _s("patient_address",               "Full patient address composite (PID-11), raw; use address_street / address_city etc."),
-        _s("address_street",                "Street address line 1 (PID-11.1)"),
-        _s("address_other_designation",     "Street address line 2, apartment, or suite (PID-11.2)"),
-        _s("address_city",                  "City or municipality (PID-11.3)"),
-        _s("address_state",                 "State, province, or region (PID-11.4)"),
-        _s("address_zip",                   "Postal or ZIP code (PID-11.5)"),
-        _s("address_country",               "ISO 3166 country code (PID-11.6)"),
-        _s("address_type",                  "Address type code (PID-11.7): H=Home, B=Business, M=Mailing, C=Current"),
+        *_cwe_schema("race", "Race", "PID-10"),
+        *_xad_schema("address", "Patient address", "PID-11"),
         _s("county_code",                   "County or parish code (PID-12, deprecated in v2.6)"),
-        _s("home_phone",                    "Home telephone number (PID-13)"),
-        _s("business_phone",                "Business telephone number (PID-14)"),
-        _s("primary_language",              "Patient's primary spoken language code (PID-15.1)"),
-        _s("primary_language_text",         "Human-readable language description (PID-15.2)"),
-        _s("primary_language_coding_system","Coding system for the language code, e.g. ISO639 (PID-15.3)"),
-        _s("primary_language_alt_code",     "Alternate language code from a secondary coding system (PID-15.4)"),
-        _s("primary_language_alt_text",     "Alternate language description (PID-15.5)"),
-        _s("primary_language_alt_coding_system","Secondary coding system for the language code (PID-15.6)"),
-        _s("marital_status",                "Marital status code (PID-16.1): S=Single, M=Married, D=Divorced, W=Widowed"),
-        _s("marital_status_text",           "Human-readable marital status description (PID-16.2)"),
-        _s("marital_status_coding_system",  "Coding system for the marital status code (PID-16.3)"),
-        _s("marital_status_alt_code",       "Alternate marital status code (PID-16.4)"),
-        _s("marital_status_alt_text",       "Alternate marital status description (PID-16.5)"),
-        _s("marital_status_alt_coding_system","Secondary coding system for the marital status code (PID-16.6)"),
-        _s("religion",                      "Religion code (PID-17.1)"),
-        _s("religion_text",                 "Human-readable religion description (PID-17.2)"),
-        _s("religion_coding_system",        "Coding system for the religion code (PID-17.3)"),
-        _s("religion_alt_code",             "Alternate religion code (PID-17.4)"),
-        _s("religion_alt_text",             "Alternate religion description (PID-17.5)"),
-        _s("religion_alt_coding_system",    "Secondary coding system for the religion code (PID-17.6)"),
-        _s("patient_account_number",        "Patient account number at the healthcare facility (PID-18.1)"),
-        _s("patient_account_check_digit",   "Check digit for the patient account number (PID-18.2)"),
-        _s("patient_account_assigning_authority","Assigning authority namespace ID for the account (PID-18.4.1)"),
-        _s("patient_account_assigning_authority_universal_id","Account assigning authority universal ID (PID-18.4.2)"),
-        _s("patient_account_assigning_authority_universal_id_type","Account assigning authority universal ID type (PID-18.4.3)"),
-        _s("patient_account_type_code",     "Type of account identifier (PID-18.5)"),
+        *_xtn_schema("home_phone", "Home phone", "PID-13"),
+        *_xtn_schema("business_phone", "Business phone", "PID-14"),
+        *_cwe_schema("primary_language", "Primary language", "PID-15"),
+        *_cwe_schema("marital_status", "Marital status", "PID-16"),
+        *_cwe_schema("religion", "Religion", "PID-17"),
+        *_cx_schema("patient_account", "Patient account", "PID-18"),
         _s("ssn",                           "Social Security Number (PID-19, deprecated in v2.7)"),
         _s("drivers_license",               "Driver's license number and issuing state (PID-20, deprecated in v2.7)"),
-        _s("mothers_identifier",            "Identifier for the patient's mother; used in neonatal records (PID-21.1)"),
-        _s("mothers_id_check_digit",        "Check digit for the mother's identifier (PID-21.2)"),
-        _s("mothers_id_assigning_authority","Assigning authority namespace ID for the mother's identifier (PID-21.4.1)"),
-        _s("mothers_id_assigning_authority_universal_id","Mother's ID assigning authority universal ID (PID-21.4.2)"),
-        _s("mothers_id_assigning_authority_universal_id_type","Mother's ID assigning authority universal ID type (PID-21.4.3)"),
-        _s("mothers_id_type_code",          "Type of mother's identifier, e.g. MR, PI (PID-21.5)"),
-        _s("ethnic_group",                  "Ethnic group code per HL7 table 0189 (PID-22.1)"),
-        _s("ethnic_group_text",             "Human-readable ethnic group description (PID-22.2)"),
-        _s("ethnic_group_coding_system",    "Coding system for the ethnic group code, e.g. CDCREC, HL70189 (PID-22.3)"),
-        _s("ethnic_group_alt_code",         "Alternate ethnic group code from a secondary coding system (PID-22.4)"),
-        _s("ethnic_group_alt_text",         "Alternate ethnic group description (PID-22.5)"),
-        _s("ethnic_group_alt_coding_system","Secondary coding system for the ethnic group code (PID-22.6)"),
+        *_cx_schema("mothers_identifier", "Mother's identifier", "PID-21"),
+        *_cwe_schema("ethnic_group", "Ethnic group", "PID-22"),
         _s("birth_place",                   "Birthplace as free text (PID-23)"),
         _s("multiple_birth_indicator",      "Whether the patient is one of a multiple birth: Y or N (PID-24)"),
         _i("birth_order",                   "Birth sequence number for multiple-birth patients, e.g. 1, 2, 3 (PID-25)"),
-        _s("citizenship",                   "Citizenship country code (PID-26.1)"),
-        _s("citizenship_text",              "Human-readable citizenship description (PID-26.2)"),
-        _s("citizenship_coding_system",     "Coding system for the citizenship code (PID-26.3)"),
-        _s("citizenship_alt_code",          "Alternate citizenship code (PID-26.4)"),
-        _s("citizenship_alt_text",          "Alternate citizenship description (PID-26.5)"),
-        _s("citizenship_alt_coding_system", "Secondary coding system for the citizenship code (PID-26.6)"),
-        _s("veterans_military_status",      "Veteran or military service status code (PID-27.1)"),
-        _s("veterans_military_status_text", "Human-readable veteran status description (PID-27.2)"),
-        _s("veterans_military_status_coding_system","Coding system for the veteran status code (PID-27.3)"),
-        _s("veterans_military_status_alt_code","Alternate veteran status code (PID-27.4)"),
-        _s("veterans_military_status_alt_text","Alternate veteran status description (PID-27.5)"),
-        _s("veterans_military_status_alt_coding_system","Secondary coding system for the veteran status code (PID-27.6)"),
-        _s("nationality",                   "Nationality code (PID-28.1, deprecated in v2.7)"),
-        _s("nationality_text",              "Human-readable nationality description (PID-28.2, deprecated)"),
-        _s("nationality_coding_system",     "Coding system for the nationality code (PID-28.3, deprecated)"),
+        *_cwe_schema("citizenship", "Citizenship", "PID-26"),
+        *_cwe_schema("veterans_military_status", "Veterans military status", "PID-27"),
+        *_cwe_schema("nationality", "Nationality", "PID-28"),
         _ts("patient_death_datetime",       "Date/time of patient death parsed to timestamp (PID-29)"),
         _s("patient_death_indicator",       "Death indicator: Y=deceased, N=alive (PID-30)"),
         _s("identity_unknown_indicator",    "Whether the patient's identity is unknown: Y or N (PID-31, v2.5+)"),
-        _s("identity_reliability_code",     "Code indicating reliability of patient identity, e.g. AL, UA (PID-32, v2.5+)"),
-        _ts("last_update_datetime",         "Date/time the patient record was last updated, parsed to timestamp (PID-33, v2.5+)"),
-        _s("last_update_facility",          "Facility namespace ID where the last update occurred (PID-34.1, v2.5+)"),
-        _s("last_update_facility_universal_id","Universal ID of the facility (PID-34.2, v2.5+)"),
-        _s("last_update_facility_universal_id_type","Type of universal ID, e.g. ISO, GUID (PID-34.3, v2.5+)"),
-        _s("species_code",                  "Species code for veterinary use (PID-35.1, v2.5+)"),
-        _s("species_code_text",             "Human-readable species description (PID-35.2, v2.5+)"),
-        _s("species_code_coding_system",    "Coding system for the species code (PID-35.3, v2.5+)"),
-        _s("species_code_alt_code",         "Alternate species code (PID-35.4, v2.5+)"),
-        _s("species_code_alt_text",         "Alternate species description (PID-35.5, v2.5+)"),
-        _s("species_code_alt_coding_system","Secondary coding system for the species code (PID-35.6, v2.5+)"),
-        _s("breed_code",                    "Breed code for veterinary use (PID-36.1, v2.5+)"),
-        _s("breed_code_text",               "Human-readable breed description (PID-36.2, v2.5+)"),
-        _s("breed_code_coding_system",      "Coding system for the breed code (PID-36.3, v2.5+)"),
-        _s("breed_code_alt_code",           "Alternate breed code (PID-36.4, v2.5+)"),
-        _s("breed_code_alt_text",           "Alternate breed description (PID-36.5, v2.5+)"),
-        _s("breed_code_alt_coding_system",  "Secondary coding system for the breed code (PID-36.6, v2.5+)"),
+        *_cwe_schema("identity_reliability_code", "Identity reliability", "PID-32"),
+        _ts("last_update_datetime",         "Date/time the patient record was last updated (PID-33, v2.5+)"),
+        *_hd_schema("last_update_facility", "Last update facility", "PID-34"),
+        *_cwe_schema("species_code", "Species/taxonomic classification", "PID-35"),
+        *_cwe_schema("breed_code", "Breed", "PID-36"),
         _s("strain",                        "Strain description for veterinary use (PID-37, v2.5+)"),
-        _s("production_class_code",         "Production class code for veterinary/agricultural use (PID-38.1, v2.5+)"),
-        _s("production_class_code_text",    "Human-readable production class description (PID-38.2, v2.5+)"),
-        _s("production_class_code_coding_system","Coding system for the production class code (PID-38.3, v2.5+)"),
-        _s("production_class_code_alt_code","Alternate production class code (PID-38.4, v2.5+)"),
-        _s("production_class_code_alt_text","Alternate production class description (PID-38.5, v2.5+)"),
-        _s("production_class_code_alt_coding_system","Secondary coding system for the production class code (PID-38.6, v2.5+)"),
-        _s("tribal_citizenship",            "Tribal citizenship or affiliation code (PID-39.1, v2.6+)"),
-        _s("tribal_citizenship_text",       "Human-readable tribal citizenship description (PID-39.2, v2.6+)"),
-        _s("tribal_citizenship_coding_system","Coding system for the tribal citizenship code (PID-39.3, v2.6+)"),
-        _s("tribal_citizenship_alt_code",   "Alternate tribal citizenship code (PID-39.4, v2.6+)"),
-        _s("tribal_citizenship_alt_text",   "Alternate tribal citizenship description (PID-39.5, v2.6+)"),
-        _s("tribal_citizenship_alt_coding_system","Secondary coding system for the tribal citizenship code (PID-39.6, v2.6+)"),
-        _s("patient_telecommunication",     "Patient telecommunication address, e.g. email or mobile (PID-40, v2.7+)"),
+        *_cwe_schema("production_class_code", "Production class", "PID-38"),
+        *_cwe_schema("tribal_citizenship", "Tribal citizenship", "PID-39"),
+        *_xtn_schema("patient_telecom", "Patient telecommunication", "PID-40"),
     ]
 )
 
@@ -558,16 +500,9 @@ PV1_SCHEMA = StructType(
     + _cx_schema("preadmit_number", "Pre-admission number", "PV1-5")
     + [
         _s("prior_patient_location",       "Prior bed location before transfer (PV1-6), raw composite"),
-        _s("attending_doctor",             "Attending physician composite (PV1-7), raw; use attending_doctor_* fields"),
     ]
     + _xcn_schema("attending_doctor", "Attending physician", "PV1-7")
-    + [
-        _s("referring_doctor",             "Referring physician composite (PV1-8), raw; use referring_doctor_* fields"),
-    ]
     + _xcn_schema("referring_doctor", "Referring physician", "PV1-8")
-    + [
-        _s("consulting_doctor",            "Consulting physician composite (PV1-9), raw; may repeat"),
-    ]
     + _xcn_schema("consulting_doctor", "Consulting physician", "PV1-9")
     + [
         _s("hospital_service",             "Type of service the patient is under, e.g. MED, SUR, ORT (PV1-10)"),
@@ -577,7 +512,6 @@ PV1_SCHEMA = StructType(
         _s("admit_source",                 "Source of the admission, e.g. 1=Physician referral, 7=Emergency room (PV1-14)"),
         _s("ambulatory_status",            "Ambulatory status code, e.g. A1=No functional limitations (PV1-15)"),
         _s("vip_indicator",                "VIP flag for special patient handling (PV1-16)"),
-        _s("admitting_doctor",             "Admitting physician composite (PV1-17), raw; use admitting_doctor_* fields"),
     ]
     + _xcn_schema("admitting_doctor", "Admitting physician", "PV1-17")
     + [
@@ -621,7 +555,6 @@ PV1_SCHEMA = StructType(
     + _cx_schema("alternate_visit_id", "Alternate visit ID", "PV1-50")
     + [
         _s("visit_indicator",              "Visit indicator: V=Visit level, A=Account level (PV1-51)"),
-        _s("other_healthcare_provider",    "Other healthcare provider(s) for the visit (PV1-52, deprecated in v2.7)"),
     ]
     + _xcn_schema("other_healthcare_provider", "Other healthcare provider", "PV1-52")
     + [
@@ -638,21 +571,11 @@ OBR_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
         _pk_i("set_id",                           "Sequence number of this OBR within the message; part of composite primary key (OBR-1)"),
-        _s("placer_order_number",                 "Order number assigned by the ordering application (OBR-2.1)"),
-        _s("placer_order_namespace_id",           "Namespace ID of the placer application (OBR-2.2)"),
-        _s("placer_order_universal_id",           "Universal ID for the placer order (OBR-2.3)"),
-        _s("placer_order_universal_id_type",      "Type of universal ID for the placer order, e.g. ISO (OBR-2.4)"),
-        _s("filler_order_number",                 "Order number assigned by the performing lab/radiology (OBR-3.1)"),
-        _s("filler_order_namespace_id",           "Namespace ID of the filler application (OBR-3.2)"),
-        _s("filler_order_universal_id",           "Universal ID for the filler order (OBR-3.3)"),
-        _s("filler_order_universal_id_type",      "Type of universal ID for the filler order, e.g. ISO (OBR-3.4)"),
-        _s("universal_service_identifier",        "Ordered test composite (OBR-4), raw; use service_id / service_text"),
-        _s("service_id",                          "Coded test identifier, e.g. LOINC or CPT code (OBR-4.1)"),
-        _s("service_text",                        "Human-readable test name, e.g. Basic Metabolic Panel (OBR-4.2)"),
-        _s("service_coding_system",               "Coding system for the test code, e.g. LN=LOINC, CPT4 (OBR-4.3)"),
-        _s("service_alt_id",                      "Alternate test code from a secondary coding system (OBR-4.4)"),
-        _s("service_alt_text",                    "Alternate test name from the secondary coding system (OBR-4.5)"),
-        _s("service_alt_coding_system",           "Secondary coding system for the test code (OBR-4.6)"),
+    ]
+    + _ei_schema("placer_order_number", "Placer order number (EI)", "OBR-2")
+    + _ei_schema("filler_order_number", "Filler order number (EI)", "OBR-3")
+    + _cwe_schema("service", "Universal service identifier (CWE)", "OBR-4")
+    + [
         _s("priority",                            "Order priority (OBR-5, deprecated in v2.7): R=Routine, S=STAT, A=ASAP"),
         _ts("requested_datetime",                 "Requested date/time for the observation, parsed to timestamp (OBR-6, deprecated in v2.7)"),
         _ts("observation_datetime",               "Date/time specimen was collected or observation started, parsed to timestamp (OBR-7)"),
@@ -663,20 +586,16 @@ OBR_SCHEMA = StructType(
     + _xcn_schema("collector", "Specimen collector", "OBR-10")
     + [
         _s("specimen_action_code",                "Action to take on the specimen (OBR-11): A=Add, G=Generated, L=Lab, O=Obtained"),
-        _s("danger_code",                         "Code indicating a hazardous specimen (OBR-12.1)"),
-        _s("danger_code_text",                    "Human-readable danger/hazard description (OBR-12.2)"),
-        _s("danger_code_coding_system",           "Coding system for the danger code (OBR-12.3)"),
-        _s("danger_code_alt_code",                "Alternate danger code (OBR-12.4)"),
-        _s("danger_code_alt_text",                "Alternate danger description (OBR-12.5)"),
-        _s("danger_code_alt_coding_system",       "Secondary coding system for the danger code (OBR-12.6)"),
+    ]
+    + _cwe_schema("danger_code", "Danger code (CWE)", "OBR-12")
+    + [
         _s("relevant_clinical_information",       "Clinical information relevant to the order, e.g. patient condition (OBR-13)"),
         _ts("specimen_received_datetime",         "Date/time the specimen was received by the lab, parsed to timestamp (OBR-14)"),
         _s("specimen_source",                     "Specimen source and collection method (OBR-15, deprecated in v2.7)"),
-        _s("ordering_provider",                   "Ordering physician composite (OBR-16), raw; use ordering_provider_* fields"),
     ]
     + _xcn_schema("ordering_provider", "Ordering physician", "OBR-16")
+    + _xtn_schema("order_callback_phone", "Order callback phone (XTN)", "OBR-17")
     + [
-        _s("order_callback_phone",                "Phone number to call with results (OBR-17)"),
         _s("placer_field_1",                      "Placer-defined field 1 for local use (OBR-18)"),
         _s("placer_field_2",                      "Placer-defined field 2 for local use (OBR-19)"),
         _s("filler_field_1",                      "Filler-defined field 1 for local use (OBR-20)"),
@@ -692,74 +611,37 @@ OBR_SCHEMA = StructType(
     + [
         _s("parent_placer_order_number",          "Placer order number of the parent order for reflex tests (OBR-29.1)"),
         _s("transportation_mode",                 "How the specimen is to be transported to the lab (OBR-30)"),
-        _s("reason_for_study",                    "Clinical reason or indication code (OBR-31.1)"),
-        _s("reason_for_study_text",               "Human-readable reason for study description (OBR-31.2)"),
-        _s("reason_for_study_coding_system",      "Coding system for the reason code (OBR-31.3)"),
-        _s("reason_for_study_alt_code",           "Alternate reason for study code (OBR-31.4)"),
-        _s("reason_for_study_alt_text",           "Alternate reason for study description (OBR-31.5)"),
-        _s("reason_for_study_alt_coding_system",  "Secondary coding system for the reason code (OBR-31.6)"),
+    ]
+    + _cwe_schema("reason_for_study", "Reason for study (CWE, first repetition)", "OBR-31")
+    + [
         _s("principal_result_interpreter",        "Provider who interpreted the result (OBR-32.1)"),
         _s("assistant_result_interpreter",        "Assistant provider who helped interpret the result (OBR-33.1)"),
         _s("technician",                          "Technician who performed the test (OBR-34.1)"),
         _s("transcriptionist",                    "Person who transcribed the result (OBR-35.1)"),
         _ts("scheduled_datetime",                 "Scheduled date/time for the observation, parsed to timestamp (OBR-36)"),
         _i("number_of_sample_containers",         "Number of specimen containers required (OBR-37)"),
-        _s("transport_logistics",                 "Specimen transport logistics code (OBR-38.1)"),
-        _s("transport_logistics_text",            "Human-readable transport logistics description (OBR-38.2)"),
-        _s("transport_logistics_coding_system",   "Coding system for transport logistics (OBR-38.3)"),
-        _s("collectors_comment",                  "Specimen collector comment code (OBR-39.1)"),
-        _s("collectors_comment_text",             "Human-readable collector comment (OBR-39.2)"),
-        _s("collectors_comment_coding_system",    "Coding system for collector comment (OBR-39.3)"),
-        _s("transport_arrangement_responsibility","Party responsible for transport code (OBR-40.1)"),
-        _s("transport_arrangement_responsibility_text","Human-readable transport responsibility description (OBR-40.2)"),
-        _s("transport_arrangement_responsibility_coding_system","Coding system for transport responsibility (OBR-40.3)"),
+    ]
+    + _cwe_schema("transport_logistics", "Transport logistics (CWE, first repetition)", "OBR-38")
+    + _cwe_schema("collectors_comment", "Collector comment (CWE, first repetition)", "OBR-39")
+    + _cwe_schema("transport_arrangement_responsibility", "Transport arrangement responsibility (CWE)", "OBR-40")
+    + [
         _s("transport_arranged",                  "Whether transport has been arranged: A=Arranged, N=Not arranged (OBR-41)"),
         _s("escort_required",                     "Whether an escort is required for specimen transport: R=Required (OBR-42)"),
-        _s("planned_patient_transport_comment",   "Planned patient transport comment code (OBR-43.1)"),
-        _s("planned_patient_transport_comment_text","Human-readable transport comment (OBR-43.2)"),
-        _s("planned_patient_transport_comment_coding_system","Coding system for transport comment (OBR-43.3)"),
-        _s("procedure_code",                      "Procedure code, e.g. CPT (OBR-44.1, v2.3+)"),
-        _s("procedure_code_text",                 "Human-readable procedure name (OBR-44.2, v2.3+)"),
-        _s("procedure_code_coding_system",        "Coding system for the procedure code, e.g. CPT4 (OBR-44.3, v2.3+)"),
-        _s("procedure_code_alt_code",             "Alternate procedure code (OBR-44.4, v2.3+)"),
-        _s("procedure_code_alt_text",             "Alternate procedure name (OBR-44.5, v2.3+)"),
-        _s("procedure_code_alt_coding_system",    "Secondary coding system for the procedure code (OBR-44.6, v2.3+)"),
-        _s("procedure_code_modifier",             "Procedure code modifier code (OBR-45.1, v2.3+)"),
-        _s("procedure_code_modifier_text",        "Human-readable procedure modifier (OBR-45.2, v2.3+)"),
-        _s("procedure_code_modifier_coding_system","Coding system for the procedure modifier (OBR-45.3, v2.3+)"),
-        _s("placer_supplemental_service_info",    "Placer supplemental service info code (OBR-46.1, v2.5+)"),
-        _s("placer_supplemental_service_info_text","Human-readable placer supplemental info (OBR-46.2, v2.5+)"),
-        _s("placer_supplemental_service_info_coding_system","Coding system for placer supplemental info (OBR-46.3, v2.5+)"),
-        _s("filler_supplemental_service_info",    "Filler supplemental service info code (OBR-47.1, v2.5+)"),
-        _s("filler_supplemental_service_info_text","Human-readable filler supplemental info (OBR-47.2, v2.5+)"),
-        _s("filler_supplemental_service_info_coding_system","Coding system for filler supplemental info (OBR-47.3, v2.5+)"),
-        _s("medically_necessary_dup_proc_reason", "Reason code for medically necessary duplicate procedure (OBR-48.1, v2.5+)"),
-        _s("medically_necessary_dup_proc_reason_text","Human-readable duplicate procedure reason (OBR-48.2, v2.5+)"),
-        _s("medically_necessary_dup_proc_reason_coding_system","Coding system for the duplicate procedure reason (OBR-48.3, v2.5+)"),
-        _s("medically_necessary_dup_proc_reason_alt_code","Alternate duplicate procedure reason code (OBR-48.4, v2.5+)"),
-        _s("medically_necessary_dup_proc_reason_alt_text","Alternate duplicate procedure reason description (OBR-48.5, v2.5+)"),
-        _s("medically_necessary_dup_proc_reason_alt_coding_system","Secondary coding system for duplicate procedure reason (OBR-48.6, v2.5+)"),
+    ]
+    + _cwe_schema("planned_patient_transport_comment", "Planned patient transport comment (CWE, first repetition)", "OBR-43")
+    + _cwe_schema("procedure_code", "Procedure code (CWE)", "OBR-44")
+    + _cwe_schema("procedure_code_modifier", "Procedure code modifier (CWE, first repetition)", "OBR-45")
+    + _cwe_schema("placer_supplemental_service_info", "Placer supplemental service info (CWE, first repetition)", "OBR-46")
+    + _cwe_schema("filler_supplemental_service_info", "Filler supplemental service info (CWE, first repetition)", "OBR-47")
+    + _cwe_schema("medically_necessary_dup_proc_reason", "Medically necessary duplicate procedure reason (CWE)", "OBR-48")
+    + [
         _s("result_handling",                     "How the result should be handled, e.g. F=Film-with-patient (OBR-49.1, v2.6+)"),
-        _s("parent_universal_service_id",         "Parent order universal service code (OBR-50.1, v2.7+)"),
-        _s("parent_universal_service_id_text",    "Human-readable parent order service name (OBR-50.2, v2.7+)"),
-        _s("parent_universal_service_id_coding_system","Coding system for the parent service code (OBR-50.3, v2.7+)"),
-        _s("parent_universal_service_id_alt_code","Alternate parent service code (OBR-50.4, v2.7+)"),
-        _s("parent_universal_service_id_alt_text","Alternate parent service name (OBR-50.5, v2.7+)"),
-        _s("parent_universal_service_id_alt_coding_system","Secondary coding system for parent service code (OBR-50.6, v2.7+)"),
-        _s("observation_group_id",                "Observation group entity identifier (OBR-51.1, v2.8.2+)"),
-        _s("observation_group_namespace_id",      "Observation group namespace ID (OBR-51.2, v2.8.2+)"),
-        _s("observation_group_universal_id",      "Observation group universal ID (OBR-51.3, v2.8.2+)"),
-        _s("observation_group_universal_id_type", "Observation group universal ID type (OBR-51.4, v2.8.2+)"),
-        _s("parent_observation_group_id",         "Parent observation group entity identifier (OBR-52.1, v2.8.2+)"),
-        _s("parent_observation_group_namespace_id","Parent observation group namespace ID (OBR-52.2, v2.8.2+)"),
-        _s("parent_observation_group_universal_id","Parent observation group universal ID (OBR-52.3, v2.8.2+)"),
-        _s("parent_observation_group_universal_id_type","Parent observation group universal ID type (OBR-52.4, v2.8.2+)"),
-        _s("alternate_placer_order_number_obr",   "Alternate placer order number ID (OBR-53.1, v2.8.2+)"),
-        _s("alternate_placer_order_check_digit",  "Alternate placer order check digit (OBR-53.2, v2.8.2+)"),
-        _s("alternate_placer_order_assigning_authority","Alternate placer order assigning authority namespace ID (OBR-53.4.1, v2.8.2+)"),
-        _s("alternate_placer_order_assigning_authority_universal_id","Alternate placer order assigning authority universal ID (OBR-53.4.2, v2.8.2+)"),
-        _s("alternate_placer_order_assigning_authority_universal_id_type","Alternate placer order assigning authority universal ID type (OBR-53.4.3, v2.8.2+)"),
-        _s("alternate_placer_order_type_code",    "Alternate placer order ID type code (OBR-53.5, v2.8.2+)"),
+    ]
+    + _cwe_schema("parent_universal_service_id", "Parent universal service ID (CWE)", "OBR-50")
+    + _ei_schema("observation_group", "Observation group (EI)", "OBR-51")
+    + _ei_schema("parent_observation_group", "Parent observation group (EI)", "OBR-52")
+    + _cx_schema("alternate_placer_order", "Alternate placer order (CX)", "OBR-53")
+    + [
         _s("parent_order",                        "Parent order identifier (OBR-54.1, v2.9+)"),
         _s("obr_action_code",                     "Action code (OBR-55, v2.9+)"),
     ]
@@ -774,28 +656,15 @@ OBX_SCHEMA = StructType(
     + [
         _pk_i("set_id",                       "Sequence number of this OBX within the message; part of composite primary key (OBX-1)"),
         _s("value_type",                      "Data type of the observation value (OBX-2): NM=Numeric, ST=String, CWE=Coded, TX=Text, TS=Timestamp"),
-        _s("observation_identifier",          "Full observation code composite (OBX-3), raw; use observation_id / observation_text"),
-        _s("observation_id",                  "Coded observation identifier, e.g. LOINC code 2951-2 for Sodium (OBX-3.1)"),
-        _s("observation_text",                "Human-readable observation name, e.g. Sodium (OBX-3.2)"),
-        _s("observation_coding_system",       "Coding system for the observation, e.g. LN=LOINC, SNOMED, LOCAL (OBX-3.3)"),
-        _s("observation_alt_id",              "Alternate observation code from a secondary coding system (OBX-3.4)"),
-        _s("observation_alt_text",            "Alternate observation name from the secondary coding system (OBX-3.5)"),
-        _s("observation_alt_coding_system",   "Secondary coding system name (OBX-3.6)"),
+    ]
+    + _cwe_schema("observation_id", "Observation identifier (CWE)", "OBX-3")
+    + [
         _s("observation_sub_id",              "Sub-identifier to group related OBX rows, e.g. for waveform or panel data (OBX-4)"),
-        _s("observation_value",               "The result value composite (OBX-5), raw; use observation_value_code / observation_value_text for coded types"),
-        _s("observation_value_code",          "Code/identifier from the observation value (OBX-5.1); meaningful when value_type is CWE, CE, or CNE"),
-        _s("observation_value_text",          "Human-readable text from the observation value (OBX-5.2); meaningful when value_type is CWE, CE, or CNE"),
-        _s("observation_value_coding_system", "Coding system for the observation value code (OBX-5.3), e.g. HL70136, SNOMED, LOINC"),
-        _s("observation_value_alt_code",      "Alternate code from a secondary coding system (OBX-5.4)"),
-        _s("observation_value_alt_text",      "Alternate text from the secondary coding system (OBX-5.5)"),
-        _s("observation_value_alt_coding_system", "Secondary coding system name (OBX-5.6)"),
-        _s("units",                           "Units of measure composite (OBX-6), raw; use units_code / units_text"),
-        _s("units_code",                      "Coded units, e.g. UCUM code mEq/L (OBX-6.1)"),
-        _s("units_text",                      "Human-readable units description, e.g. milliequivalents per liter (OBX-6.2)"),
-        _s("units_coding_system",             "Coding system for units, e.g. UCUM, ISO+ (OBX-6.3)"),
-        _s("units_alt_code",                  "Alternate units code from a secondary coding system (OBX-6.4)"),
-        _s("units_alt_text",                  "Alternate units description (OBX-6.5)"),
-        _s("units_alt_coding_system",         "Secondary coding system for units (OBX-6.6)"),
+        _s("observation_value",               "The result value composite (OBX-5), raw; use observation_value_cwe_* when value type is coded"),
+    ]
+    + _cwe_schema("observation_value_cwe", "Observation value (CWE, first repetition)", "OBX-5")
+    + _cwe_schema("units", "Units of measure (CWE)", "OBX-6")
+    + [
         _s("references_range",                "Normal or reference range for the result, e.g. 136-145 (OBX-7)"),
         _s("interpretation_codes",            "Abnormality flag (OBX-8): N=Normal, H=High, L=Low, A=Abnormal, C=Critical"),
         _s("probability",                     "Probability of the observation being correct, 0-1 scale (OBX-9)"),
@@ -804,88 +673,32 @@ OBX_SCHEMA = StructType(
         _ts("effective_date_of_ref_range",    "Date the reference range became effective, parsed to timestamp (OBX-12)"),
         _s("user_defined_access_checks",      "Site-defined access control value (OBX-13)"),
         _ts("datetime_of_observation",        "Date/time this specific observation was made, parsed to timestamp (OBX-14)"),
-        _s("producers_id",                    "Lab or system that produced the result (OBX-15.1)"),
-        _s("producers_id_text",               "Human-readable producer name (OBX-15.2)"),
-        _s("producers_id_coding_system",      "Coding system for the producer ID (OBX-15.3)"),
-        _s("producers_id_alt_code",           "Alternate producer code (OBX-15.4)"),
-        _s("producers_id_alt_text",           "Alternate producer description (OBX-15.5)"),
-        _s("producers_id_alt_coding_system",  "Secondary coding system for the producer ID (OBX-15.6)"),
     ]
+    + _cwe_schema("producers_id", "Producer ID (CWE)", "OBX-15")
     + _xcn_schema("responsible_observer", "Responsible observer", "OBX-16")
+    + _cwe_schema("observation_method", "Observation method (CWE, first repetition)", "OBX-17")
+    + _ei_schema("equipment_instance_identifier", "Equipment instance (EI, first repetition)", "OBX-18")
     + [
-        _s("observation_method",              "Observation method code, e.g. LOINC method code (OBX-17.1)"),
-        _s("observation_method_text",         "Human-readable observation method description (OBX-17.2)"),
-        _s("observation_method_coding_system","Coding system for the observation method (OBX-17.3)"),
-        _s("observation_method_alt_code",     "Alternate observation method code (OBX-17.4)"),
-        _s("observation_method_alt_text",     "Alternate observation method description (OBX-17.5)"),
-        _s("observation_method_alt_coding_system","Secondary coding system for the observation method (OBX-17.6)"),
-        _s("equipment_instance_identifier",   "Analyzer/instrument entity ID (OBX-18.1, v2.5+)"),
-        _s("equipment_instance_namespace_id", "Namespace ID of the analyzer (OBX-18.2, v2.5+)"),
-        _s("equipment_instance_universal_id", "Universal ID of the analyzer (OBX-18.3, v2.5+)"),
-        _s("equipment_instance_universal_id_type","Type of universal ID for the analyzer (OBX-18.4, v2.5+)"),
         _ts("datetime_of_analysis",           "Date/time the specimen was analyzed on the instrument, parsed to timestamp (OBX-19, v2.5+)"),
-        _s("observation_site",                "Body site code, e.g. LA=Left arm (OBX-20.1, v2.7+)"),
-        _s("observation_site_text",           "Human-readable body site description (OBX-20.2, v2.7+)"),
-        _s("observation_site_coding_system",  "Coding system for the body site code (OBX-20.3, v2.7+)"),
-        _s("observation_site_alt_code",       "Alternate body site code (OBX-20.4, v2.7+)"),
-        _s("observation_site_alt_text",       "Alternate body site description (OBX-20.5, v2.7+)"),
-        _s("observation_site_alt_coding_system","Secondary coding system for the body site code (OBX-20.6, v2.7+)"),
-        _s("observation_instance_identifier", "Observation instance entity ID (OBX-21.1, v2.7+)"),
-        _s("observation_instance_namespace_id","Namespace ID of the observation instance (OBX-21.2, v2.7+)"),
-        _s("observation_instance_universal_id","Universal ID of the observation instance (OBX-21.3, v2.7+)"),
-        _s("observation_instance_universal_id_type","Type of universal ID for the observation instance (OBX-21.4, v2.7+)"),
-        _s("mood_code",                       "Mood code: EVN=Event (actual result), INT=Intent (ordered) (OBX-22.1, v2.7+)"),
-        _s("mood_code_text",                  "Human-readable mood description (OBX-22.2, v2.7+)"),
-        _s("mood_code_coding_system",         "Coding system for the mood code (OBX-22.3, v2.7+)"),
-        _s("mood_code_alt_code",              "Alternate mood code (OBX-22.4, v2.7+)"),
-        _s("mood_code_alt_text",              "Alternate mood description (OBX-22.5, v2.7+)"),
-        _s("mood_code_alt_coding_system",     "Secondary coding system for the mood code (OBX-22.6, v2.7+)"),
-        _s("performing_organization_name",    "Name of the organization that performed the test (OBX-23.1, v2.7+)"),
-        _s("performing_organization_type_code","Organization name type code (OBX-23.2, v2.7+)"),
-        _s("performing_organization_id",      "Organization ID number (OBX-23.3, v2.7+)"),
-        _s("performing_organization_check_digit","Organization check digit (OBX-23.4, v2.7+)"),
-        _s("performing_organization_check_digit_scheme","Check digit scheme for the organization ID (OBX-23.5, v2.7+)"),
-        _s("performing_organization_assigning_authority","Assigning authority namespace ID (OBX-23.6.1, v2.7+, HD)"),
-        _s("performing_organization_assigning_authority_universal_id","Assigning authority universal ID (OBX-23.6.2, v2.7+)"),
-        _s("performing_organization_assigning_authority_universal_id_type","Assigning authority universal ID type (OBX-23.6.3, v2.7+)"),
-        _s("performing_organization_id_type_code","Type of organization ID, e.g. NPI, CLIA (OBX-23.7, v2.7+)"),
-        _s("performing_organization_assigning_facility","Assigning facility namespace ID (OBX-23.8.1, v2.7+, HD)"),
-        _s("performing_organization_assigning_facility_universal_id","Assigning facility universal ID (OBX-23.8.2, v2.7+)"),
-        _s("performing_organization_assigning_facility_universal_id_type","Assigning facility universal ID type (OBX-23.8.3, v2.7+)"),
-        _s("performing_organization_name_rep_code","Name representation code (OBX-23.9, v2.7+)"),
-        _s("performing_organization_identifier","Organization identifier (OBX-23.10, v2.7+)"),
-        _s("performing_organization_address", "Full performing organization address composite (OBX-24, v2.7+), raw"),
-        _s("performing_org_address_street",   "Performing organization street address (OBX-24.1, v2.7+)"),
-        _s("performing_org_address_other",    "Performing organization address line 2 (OBX-24.2, v2.7+)"),
-        _s("performing_org_address_city",     "Performing organization city (OBX-24.3, v2.7+)"),
-        _s("performing_org_address_state",    "Performing organization state/province (OBX-24.4, v2.7+)"),
-        _s("performing_org_address_zip",      "Performing organization postal code (OBX-24.5, v2.7+)"),
-        _s("performing_org_address_country",  "Performing organization country (OBX-24.6, v2.7+)"),
-        _s("performing_org_address_type",     "Performing organization address type (OBX-24.7, v2.7+)"),
     ]
+    + _cwe_schema("observation_site", "Observation site (CWE, first repetition)", "OBX-20")
+    + _ei_schema("observation_instance_identifier", "Observation instance (EI)", "OBX-21")
+    + _cwe_schema("mood_code", "Mood code (CWE)", "OBX-22")
+    + _xon_schema("performing_organization", "Performing organization (XON)", "OBX-23")
+    + _xad_schema("performing_org_address", "Performing organization address (XAD)", "OBX-24")
     + _xcn_schema("performing_org_medical_director", "Medical director", "OBX-25")
     + [
         _s("patient_results_release_category","Category controlling release of results to the patient (OBX-26, v2.8+)"),
-        _s("root_cause",                      "Root cause code for a corrected or amended result (OBX-27.1, v2.8+)"),
-        _s("root_cause_text",                 "Human-readable root cause description (OBX-27.2, v2.8+)"),
-        _s("root_cause_coding_system",        "Coding system for the root cause code (OBX-27.3, v2.8+)"),
-        _s("root_cause_alt_code",             "Alternate root cause code (OBX-27.4, v2.8+)"),
-        _s("root_cause_alt_text",             "Alternate root cause description (OBX-27.5, v2.8+)"),
-        _s("root_cause_alt_coding_system",    "Secondary coding system for the root cause (OBX-27.6, v2.8+)"),
-        _s("local_process_control",           "Site-defined local process code (OBX-28.1, v2.8+)"),
-        _s("local_process_control_text",      "Human-readable local process description (OBX-28.2, v2.8+)"),
-        _s("local_process_control_coding_system","Coding system for the local process code (OBX-28.3, v2.8+)"),
+    ]
+    + _cwe_schema("root_cause", "Root cause (CWE)", "OBX-27")
+    + _cwe_schema("local_process_control", "Local process control (CWE, first repetition)", "OBX-28")
+    + [
         _s("observation_type",                "Observation type (OBX-29, v2.8.2+)"),
         _s("observation_sub_type",            "Observation sub-type (OBX-30, v2.8.2+)"),
         _s("obx_action_code",                 "Action code (OBX-31, v2.9+)"),
-        _s("observation_value_absent_reason", "Reason code for absent observation value (OBX-32.1, v2.9+)"),
-        _s("observation_value_absent_reason_text","Human-readable absent value reason description (OBX-32.2, v2.9+)"),
-        _s("observation_value_absent_reason_coding_system","Coding system for the absent value reason (OBX-32.3, v2.9+)"),
-        _s("observation_related_specimen_id", "Related specimen entity identifier (OBX-33.1, v2.9+)"),
-        _s("observation_related_specimen_namespace_id","Related specimen namespace ID (OBX-33.2, v2.9+)"),
-        _s("observation_related_specimen_universal_id","Related specimen universal ID (OBX-33.3, v2.9+)"),
-        _s("observation_related_specimen_universal_id_type","Related specimen universal ID type (OBX-33.4, v2.9+)"),
     ]
+    + _cwe_schema("observation_value_absent_reason", "Observation value absent reason (CWE)", "OBX-32")
+    + _ei_schema("observation_related_specimen", "Related specimen (EI)", "OBX-33")
 )
 
 # ---------------------------------------------------------------------------
@@ -898,19 +711,8 @@ AL1_SCHEMA = StructType(
         _pk_i("set_id",               "Sequence number of this allergy within the message; part of composite primary key (AL1-1)"),
     ]
     + _cwe_schema("allergen_type_code", "Allergen type", "AL1-2")
-    + [
-        _s("allergen_code",           "Full allergen composite (AL1-3), raw; use allergen_id / allergen_text"),
-        _s("allergen_id",             "Coded allergen identifier, e.g. RxNorm or local drug code (AL1-3.1)"),
-        _s("allergen_text",           "Human-readable allergen name, e.g. Penicillin G (AL1-3.2)"),
-        _s("allergen_coding_system",  "Coding system for the allergen code, e.g. RXNORM, LOCAL (AL1-3.3)"),
-        _s("allergen_alt_code",       "Alternate allergen code (AL1-3.4)"),
-        _s("allergen_alt_text",       "Alternate allergen text (AL1-3.5)"),
-        _s("allergen_alt_coding_system", "Alternate allergen coding system (AL1-3.6)"),
-    ]
+    + _cwe_schema("allergen_code", "Allergen (CWE)", "AL1-3")
     + _cwe_schema("allergy_severity_code", "Allergy severity", "AL1-4")
-    + [
-        _s("allergy_reaction_code",   "First repetition raw string for allergy reaction (AL1-5)"),
-    ]
     + _cwe_schema("allergy_reaction", "Allergy reaction CWE (AL1-5 first repetition)", "AL1-5")
     + [
         _ts("identification_date",    "Date the allergy was first identified or recorded, parsed to timestamp (AL1-6, deprecated in v2.6)"),
@@ -926,13 +728,9 @@ DG1_SCHEMA = StructType(
     + [
         _pk_i("set_id",                            "Sequence number of this diagnosis within the message; part of composite primary key (DG1-1)"),
         _s("diagnosis_coding_method",              "Diagnosis coding method (DG1-2, deprecated in v2.7); use diagnosis_coding_system"),
-        _s("diagnosis_code",                       "Full diagnosis code composite (DG1-3), raw; use diagnosis_id / diagnosis_text"),
-        _s("diagnosis_id",                         "Coded diagnosis identifier, e.g. ICD-10-CM code J18.9 (DG1-3.1)"),
-        _s("diagnosis_text",                       "Human-readable diagnosis description, e.g. Pneumonia, unspecified (DG1-3.2)"),
-        _s("diagnosis_coding_system",              "Coding system used, e.g. ICD10CM, ICD9CM, SNOMED (DG1-3.3)"),
-        _s("diagnosis_alt_code",                   "Alternate diagnosis code (DG1-3.4)"),
-        _s("diagnosis_alt_text",                   "Alternate diagnosis text (DG1-3.5)"),
-        _s("diagnosis_alt_coding_system",          "Alternate diagnosis coding system (DG1-3.6)"),
+    ]
+    + _cwe_schema("diagnosis_code", "Diagnosis (CWE)", "DG1-3")
+    + [
         _s("diagnosis_description",                "Free-text diagnosis description (DG1-4, deprecated in v2.7)"),
         _ts("diagnosis_datetime",                  "Date/time the diagnosis was established, parsed to timestamp (DG1-5)"),
         _s("diagnosis_type",                       "Diagnosis type (DG1-6): A=Admitting, W=Working, F=Final"),
@@ -977,16 +775,13 @@ NK1_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
         _pk_i("set_id",                  "Sequence number of this next-of-kin record within the message; part of composite primary key (NK1-1)"),
-        _s("name",                       "Full name composite of the next of kin (NK1-2), raw; use nk_* fields"),
         *_xpn_schema("nk", "Next of kin", "NK1-2"),
         _s("relationship",               "Relationship to patient composite (NK1-3), raw; use relationship_code_* CWE fields"),
     ]
     + _cwe_schema("relationship_code", "Relationship to patient", "NK1-3")
-    + [
-        _s("address",                    "Next of kin address composite (NK1-4), raw"),
-        _s("phone_number",               "Next of kin home or primary telephone number (NK1-5)"),
-        _s("business_phone",             "Next of kin business telephone number (NK1-6)"),
-    ]
+    + _xad_schema("address", "Next of kin address", "NK1-4")
+    + _xtn_schema("phone_number", "Next of kin home or primary phone", "NK1-5")
+    + _xtn_schema("business_phone", "Next of kin business phone", "NK1-6")
     + _cwe_schema("contact_role", "Contact role", "NK1-7")
     + [
         _ts("start_date",                "Date this contact relationship became effective, parsed to timestamp (NK1-8)"),
@@ -997,8 +792,8 @@ NK1_SCHEMA = StructType(
     + _cx_schema("employee_number", "Employee number", "NK1-12")
     + _xon_schema("organization_name", "Employer organization", "NK1-13")
     + _cwe_schema("marital_status", "Marital status", "NK1-14")
+    + _cwe_schema("administrative_sex", "Administrative sex", "NK1-15")
     + [
-        _s("administrative_sex",         "Administrative gender of the next of kin: M, F, O, U (NK1-15)"),
         _ts("date_of_birth",             "Date of birth of the next of kin, parsed to timestamp (NK1-16)"),
     ]
     + _cwe_schema("living_dependency", "Living dependency", "NK1-17")
@@ -1015,18 +810,16 @@ NK1_SCHEMA = StructType(
     ]
     + _cwe_schema("religion", "Religion", "NK1-25")
     + [
-        _s("mothers_maiden_name",        "Mother's maiden name composite (NK1-26), raw; use mothers_maiden_* fields"),
         *_xpn_schema("mothers_maiden", "NK1 mother's maiden", "NK1-26"),
-        _s("nationality",                "Nationality of the next of kin (NK1-27.1)"),
     ]
+    + _cwe_schema("nationality", "Nationality", "NK1-27")
     + _cwe_schema("ethnic_group", "Ethnic group", "NK1-28")
     + _cwe_schema("contact_reason", "Contact reason", "NK1-29")
     + [
-        _s("contact_person_name",        "Contact person name composite (NK1-30), raw; use contact_person_* fields"),
         *_xpn_schema("contact_person", "Contact person", "NK1-30"),
-        _s("contact_person_telephone",   "Telephone number of the contact person (NK1-31)"),
-        _s("contact_persons_address",    "Address of the contact person (NK1-32)"),
     ]
+    + _xtn_schema("contact_person_telephone", "Contact person telephone", "NK1-31")
+    + _xad_schema("contact_persons_address", "Contact person address", "NK1-32")
     + _cx_schema("associated_party_identifiers", "Associated party identifier", "NK1-33")
     + [
         _s("job_status",                 "Employment status of the next of kin (NK1-34)"),
@@ -1037,9 +830,9 @@ NK1_SCHEMA = StructType(
         _s("contact_ssn",                "Social Security Number of the contact person (NK1-37, deprecated in v2.7)"),
         _s("nk_birth_place",             "Birth place of the next of kin (NK1-38, v2.6+)"),
         _s("vip_indicator",              "VIP flag for the next of kin (NK1-39, v2.6+)"),
-        _s("nk_telecommunication_info",  "Next of kin telecommunication information (NK1-40, v2.7+)"),
-        _s("contact_telecommunication_info", "Contact person telecommunication information (NK1-41, v2.7+)"),
     ]
+    + _xtn_schema("nk_telecommunication_info", "Next of kin telecommunication", "NK1-40")
+    + _xtn_schema("contact_telecommunication_info", "Contact person telecommunication", "NK1-41")
 )
 
 # ---------------------------------------------------------------------------
@@ -1052,22 +845,13 @@ EVN_SCHEMA = StructType(
         _s("event_type_code",          "Event type code (EVN-1, deprecated in v2.5); superseded by MSH-9 trigger event"),
         _ts("recorded_datetime",       "Date/time the event was recorded in the sending system, parsed to timestamp (EVN-2)"),
         _ts("date_time_planned_event", "Date/time the event was planned to occur, parsed to timestamp (EVN-3)"),
-        # EVN-4  Event Reason Code (CWE)
-        _s("event_reason_code",                   "Coded reason the event occurred (EVN-4.1): 01=Patient request, 02=Physician order, 03=Census management"),
-        _s("event_reason_text",                   "Human-readable text for the event reason (EVN-4.2)"),
-        _s("event_reason_coding_system",          "Coding system for the event reason code (EVN-4.3)"),
-        _s("event_reason_alt_code",               "Alternate code for the event reason (EVN-4.4)"),
-        _s("event_reason_alt_text",               "Alternate text for the event reason (EVN-4.5)"),
-        _s("event_reason_alt_coding_system",      "Alternate coding system for the event reason (EVN-4.6)"),
-        # EVN-5  Operator ID (XCN, repeating)
-        *_xcn_schema("operator", "Operator", "EVN-5"),
-        # EVN-6  Event Occurred (DTM)
-        _ts("event_occurred",          "Actual date/time the event occurred, parsed to timestamp (EVN-6)"),
-        # EVN-7  Event Facility (HD)
-        _s("event_facility",                    "Facility where the event took place — namespace ID (EVN-7.1, v2.5+)"),
-        _s("event_facility_universal_id",       "Facility universal ID (EVN-7.2)"),
-        _s("event_facility_universal_id_type",  "Facility universal ID type (EVN-7.3)"),
     ]
+    + _cwe_schema("event_reason", "Event reason", "EVN-4")
+    + [
+        *_xcn_schema("operator", "Operator", "EVN-5"),
+        _ts("event_occurred",          "Actual date/time the event occurred, parsed to timestamp (EVN-6)"),
+    ]
+    + _hd_schema("event_facility", "Event facility", "EVN-7")
 )
 
 # ---------------------------------------------------------------------------
@@ -1187,9 +971,6 @@ PV2_SCHEMA = StructType(
 
 MRG_SCHEMA = StructType(
     _METADATA_FIELDS
-    + [
-        _s("prior_patient_identifier_list",   "Prior patient identifier list raw (MRG-1)"),
-    ]
     + _cx_schema("prior_patient_id", "Prior patient identifier (MRG-1 CX)", "MRG-1")
     + [
         _s("prior_alternate_patient_id",      "Prior alternate patient ID (MRG-2, deprecated)"),
@@ -1199,7 +980,6 @@ MRG_SCHEMA = StructType(
     + _cx_schema("prior_visit_number", "Prior visit number", "MRG-5")
     + _cx_schema("prior_alternate_visit_id", "Prior alternate visit ID", "MRG-6")
     + [
-        _s("prior_patient_name",              "Prior patient name composite (MRG-7), raw; use prior_patient_* XPN fields"),
         *_xpn_schema("prior_patient", "Prior patient", "MRG-7"),
     ]
 )
@@ -1214,19 +994,8 @@ IAM_SCHEMA = StructType(
         _pk_i("set_id",                          "Sequence number for this IAM segment within the message (IAM-1)"),
     ]
     + _cwe_schema("allergen_type_code", "Allergen type", "IAM-2")
-    + [
-        _s("allergen_code",                       "Allergen code/mnemonic/description raw (IAM-3)"),
-        _s("allergen_id",                         "Allergen identifier code (IAM-3.1)"),
-        _s("allergen_text",                       "Allergen display text (IAM-3.2)"),
-        _s("allergen_coding_system",              "Allergen coding system (IAM-3.3)"),
-        _s("allergen_alt_code",                   "Alternate allergen code (IAM-3.4)"),
-        _s("allergen_alt_text",                   "Alternate allergen text (IAM-3.5)"),
-        _s("allergen_alt_coding_system",          "Alternate allergen coding system (IAM-3.6)"),
-    ]
+    + _cwe_schema("allergen_code", "Allergen (CWE)", "IAM-3")
     + _cwe_schema("allergy_severity_code", "Allergy severity", "IAM-4")
-    + [
-        _s("allergy_reaction_code",               "First repetition raw string for allergy reaction (IAM-5)"),
-    ]
     + _cwe_schema("allergy_reaction", "Allergy reaction CWE", "IAM-5")
     + _cwe_schema("allergy_action_code", "Allergy action code", "IAM-6")
     + _ei_schema("allergy_unique_identifier", "Unique allergy identifier", "IAM-7")
@@ -1239,7 +1008,6 @@ IAM_SCHEMA = StructType(
         _s("onset_date",                          "Allergy onset date (IAM-11)"),
         _s("onset_date_text",                     "Free-text onset date description (IAM-12)"),
         _ts("reported_datetime",                  "When the allergy was reported (IAM-13)"),
-        _s("reported_by",                         "Person who reported the allergy composite (IAM-14), raw; use reported_by_* fields"),
         *_xpn_schema("reported_by", "Allergy reporter", "IAM-14"),
     ]
     + _cwe_schema("relationship_to_patient_code", "Relationship to patient", "IAM-15")
@@ -1277,13 +1045,9 @@ PR1_SCHEMA = StructType(
     + [
         _pk_i("set_id",                    "Sequence number for this PR1 segment within the message (PR1-1)"),
         _s("procedure_coding_method",      "Procedure coding method (PR1-2, deprecated)"),
-        _s("procedure_code",               "Procedure code raw (PR1-3)"),
-        _s("procedure_id",                 "CPT/ICD procedure code (PR1-3.1)"),
-        _s("procedure_text",               "Procedure display text (PR1-3.2)"),
-        _s("procedure_coding_system",      "Procedure coding system (PR1-3.3)"),
-        _s("procedure_alt_code",           "Alternate procedure code (PR1-3.4)"),
-        _s("procedure_alt_text",           "Alternate procedure text (PR1-3.5)"),
-        _s("procedure_alt_coding_system",  "Alternate procedure coding system (PR1-3.6)"),
+    ]
+    + _cwe_schema("procedure_code", "Procedure (CWE)", "PR1-3")
+    + [
         _s("procedure_description",        "Procedure description (PR1-4, deprecated)"),
         _ts("procedure_datetime",          "When the procedure was performed (PR1-5)"),
         _s("procedure_functional_type",    "Functional type (PR1-6): A=Anesthesia, P=Procedure, I=Invasion"),
@@ -1341,13 +1105,12 @@ ORC_SCHEMA = StructType(
     ]
     + _xcn_schema("entered_by", "Person who entered the order", "ORC-10")
     + _xcn_schema("verified_by", "Person who verified the order", "ORC-11")
-    + [
-        _s("ordering_provider",                        "Ordering provider XCN composite raw (ORC-12)"),
-    ]
     + _xcn_schema("ordering_provider", "Ordering provider", "ORC-12")
     + [
         _s("enterers_location",                        "Location where order was entered (ORC-13)"),
-        _s("call_back_phone_number",                   "Callback phone number (ORC-14)"),
+    ]
+    + _xtn_schema("call_back_phone", "Callback phone (XTN)", "ORC-14")
+    + [
         _ts("order_effective_datetime",                "Order effective date/time (ORC-15)"),
     ]
     + _cwe_schema("order_control_code_reason", "Order control code reason", "ORC-16")
@@ -1356,11 +1119,9 @@ ORC_SCHEMA = StructType(
     + _xcn_schema("action_by", "Person who actioned the order", "ORC-19")
     + _cwe_schema("advanced_beneficiary_notice_code", "Advanced beneficiary notice (ABN) code", "ORC-20")
     + _xon_schema("ordering_facility_name", "Ordering facility name (XON)", "ORC-21")
-    + [
-        _s("ordering_facility_address",                "Ordering facility address (ORC-22)"),
-        _s("ordering_facility_phone",                  "Ordering facility phone (ORC-23)"),
-        _s("ordering_provider_address",                "Ordering provider address (ORC-24)"),
-    ]
+    + _xad_schema("ordering_facility_address", "Ordering facility address (XAD)", "ORC-22")
+    + _xtn_schema("ordering_facility_phone", "Ordering facility phone (XTN)", "ORC-23")
+    + _xad_schema("ordering_provider_address", "Ordering provider address (XAD)", "ORC-24")
     + _cwe_schema("order_status_modifier", "Order status modifier", "ORC-25")
     + _cwe_schema("abn_override_reason", "ABN override reason", "ORC-26")
     + [
@@ -1416,13 +1177,8 @@ SPM_SCHEMA = StructType(
     + _ei_schema("specimen_id", "Specimen identifier (EI)", "SPM-2")
     + [
         _s("specimen_parent_ids",             "Parent specimen identifiers (SPM-3.1)"),
-        _s("specimen_type",                   "Specimen type raw (SPM-4)"),
-        _s("specimen_type_code",              "Specimen type code (SPM-4.1)"),
-        _s("specimen_type_text",              "Specimen type text (SPM-4.2)"),
-        _s("specimen_type_alt_code",          "Specimen type alternate code (SPM-4.4)"),
-        _s("specimen_type_alt_text",          "Specimen type alternate text (SPM-4.5)"),
-        _s("specimen_type_alt_coding_system", "Specimen type alternate coding system (SPM-4.6)"),
     ]
+    + _cwe_schema("specimen_type", "Specimen type", "SPM-4")
     + _cwe_schema("specimen_type_modifier", "Specimen type modifier", "SPM-5")
     + _cwe_schema("specimen_additives", "Specimen additives/preservatives", "SPM-6")
     + _cwe_schema("specimen_collection_method", "Collection method", "SPM-7")
@@ -1476,11 +1232,12 @@ IN1_SCHEMA = StructType(
     + _cwe_schema("insurance_plan", "Insurance plan", "IN1-2")
     + _xon_schema("insurance_company", "Insurance company", "IN1-3")
     + _xon_schema("insurance_company_name", "Insurance company name (XON)", "IN1-4")
+    + _xad_schema("insurance_company_address", "Insurance company address", "IN1-5")
     + [
-        _s("insurance_company_address",        "Insurance company address (IN1-5)"),
-        _s("insurance_co_contact_person",      "Insurance company contact person composite (IN1-6), raw; use insurance_co_contact_* fields"),
         *_xpn_schema("insurance_co_contact", "Insurance contact", "IN1-6"),
-        _s("insurance_co_phone_number",        "Insurance company phone number (IN1-7)"),
+    ]
+    + _xtn_schema("insurance_co_phone_number", "Insurance company phone", "IN1-7")
+    + [
         _s("group_number",                     "Insurance group/policy group number (IN1-8)"),
     ]
     + _xon_schema("group_name", "Insurance group name", "IN1-9")
@@ -1491,13 +1248,14 @@ IN1_SCHEMA = StructType(
         _s("plan_expiration_date",             "Plan expiration date (IN1-13)"),
         _s("authorization_information",        "Authorization information (IN1-14.1)"),
         _s("plan_type",                        "Plan type (IN1-15)"),
-        _s("name_of_insured",                  "Insured person's name composite (IN1-16), raw; use insured_* fields"),
         *_xpn_schema("insured", "Insured person", "IN1-16"),
     ]
     + _cwe_schema("insureds_relationship_to_patient", "Insured's relationship to patient", "IN1-17")
     + [
         _ts("insureds_date_of_birth",          "Insured's date of birth (IN1-18)"),
-        _s("insureds_address",                 "Insured's address (IN1-19)"),
+    ]
+    + _xad_schema("insureds_address", "Insured's address", "IN1-19")
+    + [
         _s("assignment_of_benefits",           "Assignment of benefits (IN1-20)"),
         _s("coordination_of_benefits",         "Coordination of benefits (IN1-21)"),
         _s("coord_of_ben_priority",            "COB priority (IN1-22)"),
@@ -1524,9 +1282,9 @@ IN1_SCHEMA = StructType(
         _s("room_rate_private",                "Private room rate (IN1-41.1, deprecated)"),
     ]
     + _cwe_schema("insureds_employment_status", "Insured's employment status", "IN1-42")
+    + _cwe_schema("insureds_administrative_sex", "Insured's administrative sex", "IN1-43")
+    + _xad_schema("insureds_employers_address", "Insured's employer address", "IN1-44")
     + [
-        _s("insureds_administrative_sex",      "Insured's sex (IN1-43): M=Male, F=Female"),
-        _s("insureds_employers_address",       "Insured's employer address (IN1-44)"),
         _s("verification_status",              "Verification status (IN1-45)"),
         _s("prior_insurance_plan_id",          "Prior insurance plan ID (IN1-46)"),
         _s("coverage_type",                    "Coverage type (IN1-47)"),
@@ -1554,15 +1312,17 @@ GT1_SCHEMA = StructType(
     ]
     + _cx_schema("guarantor_number", "Guarantor number (CX)", "GT1-2")
     + [
-        _s("guarantor_name",                       "Guarantor name composite (GT1-3), raw; use guarantor_* fields"),
         *_xpn_schema("guarantor", "Guarantor", "GT1-3"),
-        _s("guarantor_spouse_name",                "Guarantor spouse name composite (GT1-4), raw; use guarantor_spouse_* fields"),
         *_xpn_schema("guarantor_spouse", "Guarantor spouse", "GT1-4"),
-        _s("guarantor_address",                    "Guarantor address (GT1-5)"),
-        _s("guarantor_ph_num_home",                "Guarantor home phone (GT1-6)"),
-        _s("guarantor_ph_num_business",            "Guarantor business phone (GT1-7)"),
+    ]
+    + _xad_schema("guarantor_address", "Guarantor address", "GT1-5")
+    + _xtn_schema("guarantor_ph_num_home", "Guarantor home phone", "GT1-6")
+    + _xtn_schema("guarantor_ph_num_business", "Guarantor business phone", "GT1-7")
+    + [
         _ts("guarantor_date_of_birth",             "Guarantor date of birth (GT1-8)"),
-        _s("guarantor_administrative_sex",         "Guarantor sex (GT1-9): M=Male, F=Female"),
+    ]
+    + _cwe_schema("guarantor_administrative_sex", "Guarantor administrative sex", "GT1-9")
+    + [
         _s("guarantor_type",                       "Guarantor type (GT1-10)"),
     ]
     + _cwe_schema("guarantor_relationship", "Guarantor relationship to patient", "GT1-11")
@@ -1571,11 +1331,10 @@ GT1_SCHEMA = StructType(
         _s("guarantor_date_begin",                 "Guarantor start date (GT1-13)"),
         _s("guarantor_date_end",                   "Guarantor end date (GT1-14)"),
         _i("guarantor_priority",                   "Guarantor priority (GT1-15)"),
-        _s("guarantor_employer_name",              "Guarantor employer name composite (GT1-16), raw; use guarantor_employer_* fields"),
         *_xpn_schema("guarantor_employer", "Guarantor employer", "GT1-16"),
-        _s("guarantor_employer_address",           "Guarantor employer address (GT1-17)"),
-        _s("guarantor_employer_phone_number",      "Guarantor employer phone (GT1-18)"),
     ]
+    + _xad_schema("guarantor_employer_address", "Guarantor employer address", "GT1-17")
+    + _xtn_schema("guarantor_employer_phone_number", "Guarantor employer phone", "GT1-18")
     + _cx_schema("guarantor_employee_id_number", "Guarantor employee ID (CX)", "GT1-19")
     + [
         _s("guarantor_employment_status",          "Guarantor employment status (GT1-20)"),
@@ -1614,16 +1373,14 @@ GT1_SCHEMA = StructType(
     ]
     + _cwe_schema("religion", "Religion", "GT1-41")
     + [
-        _s("mothers_maiden_name",                  "GT1 mother's maiden name composite (GT1-42), raw; use gt1_mothers_maiden_* fields"),
         *_xpn_schema("gt1_mothers_maiden", "GT1 mother's maiden", "GT1-42"),
     ]
     + _cwe_schema("nationality", "Nationality", "GT1-43")
     + _cwe_schema("ethnic_group", "Ethnic group", "GT1-44")
     + [
-        _s("contact_persons_name",                 "GT1 contact person name composite (GT1-45), raw; use gt1_contact_person_* fields"),
         *_xpn_schema("gt1_contact_person", "GT1 contact person", "GT1-45"),
-        _s("contact_persons_telephone_number",     "Contact person phone (GT1-46)"),
     ]
+    + _xtn_schema("contact_persons_telephone_number", "Contact person phone", "GT1-46")
     + _cwe_schema("contact_reason", "Contact reason", "GT1-47")
     + [
         _s("contact_relationship",                 "Contact relationship (GT1-48)"),
@@ -1656,13 +1413,9 @@ FT1_SCHEMA = StructType(
         _s("transaction_date",                        "Transaction date/time range start (FT1-4.1)"),
         _ts("transaction_posting_date",               "Posting date/time (FT1-5)"),
         _s("transaction_type",                        "Transaction type (FT1-6): CG=Charge, CR=Credit, PA=Payment, AJ=Adjustment"),
-        _s("transaction_code",                        "Transaction/charge code raw (FT1-7)"),
-        _s("transaction_code_id",                     "Transaction code identifier (FT1-7.1)"),
-        _s("transaction_code_text",                   "Transaction code text (FT1-7.2)"),
-        _s("transaction_code_coding_system",          "Transaction code coding system (FT1-7.3)"),
-        _s("transaction_code_alt_code",               "Transaction code alternate code (FT1-7.4)"),
-        _s("transaction_code_alt_text",               "Transaction code alternate text (FT1-7.5)"),
-        _s("transaction_code_alt_coding_system",      "Transaction code alternate coding system (FT1-7.6)"),
+    ]
+    + _cwe_schema("transaction_code", "Transaction / charge code", "FT1-7")
+    + [
         _s("transaction_description",                 "Transaction description (FT1-8, deprecated)"),
         _s("transaction_description_alt",             "Alternate transaction description (FT1-9, deprecated)"),
         _i("transaction_quantity",                    "Transaction quantity (FT1-10)"),
@@ -1732,13 +1485,9 @@ RXA_SCHEMA = StructType(
         _i("administration_sub_id_counter",            "Administration sub-ID counter (RXA-2)"),
         _ts("datetime_start_of_administration",        "Administration start date/time (RXA-3)"),
         _ts("datetime_end_of_administration",          "Administration end date/time (RXA-4)"),
-        _s("administered_code",                        "Drug/vaccine code raw (RXA-5)"),
-        _s("administered_code_id",                     "Drug/vaccine code identifier (RXA-5.1)"),
-        _s("administered_code_text",                   "Drug/vaccine code text (RXA-5.2)"),
-        _s("administered_code_coding_system",          "Drug/vaccine coding system (RXA-5.3)"),
-        _s("administered_code_alt_code",                "Drug/vaccine alternate code (RXA-5.4)"),
-        _s("administered_code_alt_text",                "Drug/vaccine alternate text (RXA-5.5)"),
-        _s("administered_code_alt_coding_system",       "Drug/vaccine alternate coding system (RXA-5.6)"),
+    ]
+    + _cwe_schema("administered_code", "Drug / vaccine administered", "RXA-5")
+    + [
         _s("administered_amount",                      "Amount administered (RXA-6)"),
     ]
     + _cwe_schema("administered_units", "Units of measure", "RXA-7")
@@ -1794,20 +1543,20 @@ SCH_SCHEMA = StructType(
         _s("appointment_timing_quantity",  "Appointment timing quantity (SCH-11, deprecated)"),
     ]
     + _xcn_schema("placer_contact_person", "Placer contact person", "SCH-12")
+    + _xtn_schema("placer_contact_phone_number", "Placer contact phone", "SCH-13")
+    + _xad_schema("placer_contact_address", "Placer contact address", "SCH-14")
     + [
-        _s("placer_contact_phone_number",  "Placer contact phone (SCH-13)"),
-        _s("placer_contact_address",       "Placer contact address (SCH-14)"),
         _s("placer_contact_location",      "Placer contact location (SCH-15)"),
     ]
     + _xcn_schema("filler_contact_person", "Filler contact person", "SCH-16")
+    + _xtn_schema("filler_contact_phone_number", "Filler contact phone", "SCH-17")
+    + _xad_schema("filler_contact_address", "Filler contact address", "SCH-18")
     + [
-        _s("filler_contact_phone_number",  "Filler contact phone (SCH-17)"),
-        _s("filler_contact_address",       "Filler contact address (SCH-18)"),
         _s("filler_contact_location",      "Filler contact location (SCH-19)"),
     ]
     + _xcn_schema("entered_by_person", "Person who entered the schedule", "SCH-20")
+    + _xtn_schema("entered_by_phone_number", "Entered by phone", "SCH-21")
     + [
-        _s("entered_by_phone_number",      "Entered by phone number (SCH-21)"),
         _s("entered_by_location",          "Entered by location (SCH-22)"),
     ]
     + _ei_schema("parent_placer_appointment_id", "Parent placer appointment ID (EI)", "SCH-23")

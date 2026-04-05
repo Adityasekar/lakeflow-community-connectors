@@ -11,6 +11,18 @@ from databricks.labs.community_connector.sources.hl7_v2.hl7_v2 import _extract_m
 from databricks.labs.community_connector.sources.hl7_v2.hl7_v2_parser import (
     parse_message,
 )
+from databricks.labs.community_connector.sources.hl7_v2.hl7_v2_schemas import (
+    get_schema,
+)
+
+_METADATA = {
+    "message_id",
+    "message_timestamp",
+    "hl7_version",
+    "source_file",
+    "send_time",
+    "raw_segment",
+}
 
 
 # ── Extraction: happy path ──────────────────────────────────────────────────
@@ -82,19 +94,6 @@ class TestMSHMissingFields:
     def test_all_output_keys_present(self):
         msg = parse_message("MSH|^~\\&|A|B|C|D|20240101||ADT^A01|1|P|2.5")
         row = _extract_msh(msg.get_segment("MSH"))
-        expected_keys = {
-            "field_separator", "encoding_characters", "sending_application",
-            "sending_facility", "receiving_application", "receiving_facility",
-            "message_datetime", "security", "message_code", "trigger_event",
-            "message_structure", "message_control_id", "processing_id",
-            "version_id", "sequence_number", "continuation_pointer",
-            "accept_acknowledgment_type", "application_acknowledgment_type",
-            "country_code", "character_set", "principal_language",
-            "alt_character_set_handling", "message_profile_identifier",
-            "message_profile_namespace_id", "message_profile_universal_id",
-            "message_profile_universal_id_type", "sending_responsible_org",
-            "receiving_responsible_org", "sending_network_address",
-            "receiving_network_address", "security_classification_tag",
-            "security_handling_instructions", "special_access_restriction",
-        }
+        schema_keys = {f.name for f in get_schema("msh").fields}
+        expected_keys = schema_keys - _METADATA
         assert set(row.keys()) == expected_keys

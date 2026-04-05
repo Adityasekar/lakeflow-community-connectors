@@ -18,20 +18,20 @@ class TestAL1Extraction:
         msg = parse_first(load_sample("sample_adt.hl7"))
         row = extract_segment(msg, "AL1", _extract_al1)
         assert row["allergen_type_code"] == "DA"
-        assert row["allergen_id"] == "PENICILLIN"
-        assert row["allergy_reaction_code"] == "HIVES"
+        assert row["allergen_code"] == "PENICILLIN"
+        assert row["allergy_reaction"] == "HIVES"
 
     def test_comprehensive_multiple_al1(self):
         msg = parse_first(load_sample("sample_adt_comprehensive.hl7"))
         segs = segments_of_type(msg, "AL1")
         assert len(segs) == 2
         row1 = _extract_al1(segs[0])
-        assert row1["allergen_id"] == "ASPIRIN"
+        assert row1["allergen_code"] == "ASPIRIN"
         assert row1["allergy_severity_code"] == "SV"
-        assert row1["allergy_reaction_code"] == "ANAPHYLAXIS"
+        assert row1["allergy_reaction"] == "ANAPHYLAXIS"
         row2 = _extract_al1(segs[1])
         assert row2["allergen_type_code"] == "FA"
-        assert row2["allergen_id"] == "SHELLFISH"
+        assert row2["allergen_code"] == "SHELLFISH"
 
 
 class TestAL1MissingFields:
@@ -43,9 +43,9 @@ class TestAL1MissingFields:
         row = _extract_al1(msg.get_segment("AL1"))
         assert row["set_id"] == 1
         assert row["allergen_type_code"] is None
-        assert row["allergen_id"] is None
+        assert row["allergen_code"] is None
         assert row["allergy_severity_code"] is None
-        assert row["allergy_reaction_code"] is None
+        assert row["allergy_reaction"] is None
         assert row["identification_date"] is None
 
     def test_al1_type_and_code_only(self):
@@ -55,5 +55,5 @@ class TestAL1MissingFields:
         )
         row = _extract_al1(msg.get_segment("AL1"))
         assert row["allergen_type_code"] == "DA"
-        assert row["allergen_id"] == "CODEINE"
-        assert row["allergen_text"] == "Codeine"
+        assert row["allergen_code"] == "CODEINE"
+        assert row["allergen_code_text"] == "Codeine"

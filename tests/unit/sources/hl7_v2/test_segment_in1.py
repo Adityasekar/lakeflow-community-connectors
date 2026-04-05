@@ -22,7 +22,7 @@ class TestIN1Extraction:
         assert row["insurance_company_name"] == "Blue Cross Blue Shield of Illinois"
         assert row["group_number"] == "GRP7700"
         assert row["plan_type"] == "PPO"
-        assert row["name_of_insured_family"] == "Martinez"
+        assert row["insured_family_name"] == "Martinez"
         assert row["insureds_relationship_to_patient"] == "SEL"
 
     def test_dft_in1(self):
@@ -45,7 +45,7 @@ class TestIN1MissingFields:
         assert row["insurance_company_name"] is None
         assert row["group_number"] is None
         assert row["plan_type"] is None
-        assert row["name_of_insured_family"] is None
+        assert row["insured_family_name"] is None
 
     def test_in1_plan_only(self):
         msg = parse_message(

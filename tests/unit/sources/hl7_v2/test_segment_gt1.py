@@ -29,7 +29,7 @@ class TestGT1Extraction:
         row1 = _extract_gt1(segs[0])
         assert row1["guarantor_family_name"] == "Wilson"
         assert row1["guarantor_ssn"] == "111-22-3333"
-        assert row1["guarantor_employer_name"] == "TECH SOLUTIONS INC"
+        assert row1["guarantor_employer_family_name"] == "TECH SOLUTIONS INC"
         row2 = _extract_gt1(segs[1])
         assert row2["guarantor_family_name"] == "Wilson"
         assert row2["guarantor_given_name"] == "Sarah"
@@ -49,7 +49,7 @@ class TestGT1MissingFields:
         assert row["guarantor_administrative_sex"] is None
         assert row["guarantor_ssn"] is None
         assert row["guarantor_relationship"] is None
-        assert row["guarantor_employer_name"] is None
+        assert row["guarantor_employer_family_name"] is None
 
     def test_gt1_name_only(self):
         msg = parse_message(

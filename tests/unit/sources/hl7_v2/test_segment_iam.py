@@ -18,8 +18,8 @@ class TestIAMExtraction:
         msg = parse_first(load_sample("sample_adt_comprehensive.hl7"))
         row = extract_segment(msg, "IAM", _extract_iam)
         assert row["allergen_type_code"] == "DA"
-        assert row["allergen_id"] == "SULFA"
-        assert row["allergen_text"] == "Sulfonamides"
+        assert row["allergen_code"] == "SULFA"
+        assert row["allergen_code_text"] == "Sulfonamides"
         assert row["allergy_severity_code"] == "SV"
         assert row["reported_datetime"] is not None
         assert row["reported_by_family_name"] == "PRN001"
@@ -34,7 +34,7 @@ class TestIAMMissingFields:
         row = _extract_iam(msg.get_segment("IAM"))
         assert row["set_id"] == 1
         assert row["allergen_type_code"] is None
-        assert row["allergen_id"] is None
+        assert row["allergen_code"] is None
         assert row["allergy_severity_code"] is None
         assert row["reported_datetime"] is None
         assert row["reported_by_family_name"] is None
@@ -47,6 +47,6 @@ class TestIAMMissingFields:
         )
         row = _extract_iam(msg.get_segment("IAM"))
         assert row["allergen_type_code"] == "DA"
-        assert row["allergen_id"] == "LATEX"
-        assert row["allergen_text"] == "Latex allergy"
-        assert row["allergen_coding_system"] == "L"
+        assert row["allergen_code"] == "LATEX"
+        assert row["allergen_code_text"] == "Latex allergy"
+        assert row["allergen_code_coding_system"] == "L"

@@ -20,10 +20,10 @@ class TestOBXExtraction:
         assert len(segs) == 5
         na = _extract_obx(segs[0])
         assert na["observation_id"] == "2951-2"
-        assert na["observation_text"] == "Sodium"
+        assert na["observation_id_text"] == "Sodium"
         assert na["value_type"] == "NM"
         assert na["observation_value"] == "138"
-        assert na["units_code"] == "mEq/L"
+        assert na["units"] == "mEq/L"
         assert na["references_range"] == "136-145"
         assert na["interpretation_codes"] == "N"
 
@@ -32,8 +32,8 @@ class TestOBXExtraction:
         segs = segments_of_type(msg, "OBX")
         row = _extract_obx(segs[0])
         assert row["value_type"] == "CWE"
-        assert row["observation_value_code"] == "U"
-        assert row["observation_value_text"] == "Unknown"
+        assert row["observation_value_cwe"] == "U"
+        assert row["observation_value_cwe_text"] == "Unknown"
 
     def test_gc_obx_structured_numeric(self):
         msg = parse_first(load_sample("sample_oru_gc_testing.hl7"))
@@ -53,7 +53,7 @@ class TestOBXExtraction:
         msg = parse_first(load_sample("sample_oru_flu_ar.hl7"))
         segs = segments_of_type(msg, "OBX")
         row = _extract_obx(segs[0])
-        assert row["performing_organization_name"] == "MERCY HOSPITAL ROGERS LAB"
+        assert row["performing_organization"] == "MERCY HOSPITAL ROGERS LAB"
 
 
 class TestOBXMissingFields:
@@ -67,10 +67,10 @@ class TestOBXMissingFields:
         assert row["value_type"] is None
         assert row["observation_id"] is None
         assert row["observation_value"] is None
-        assert row["units_code"] is None
+        assert row["units"] is None
         assert row["references_range"] is None
         assert row["interpretation_codes"] is None
-        assert row["performing_organization_name"] is None
+        assert row["performing_organization"] is None
 
     def test_obx_no_units_no_range(self):
         msg = parse_message(
@@ -81,7 +81,7 @@ class TestOBXMissingFields:
         assert row["value_type"] == "ST"
         assert row["observation_id"] == "1234-5"
         assert row["observation_value"] == "Result text"
-        assert row["units_code"] is None
+        assert row["units"] is None
         assert row["references_range"] is None
 
 
@@ -93,9 +93,9 @@ class TestOBXEdgeCases:
         )
         row = _extract_obx(msg.get_segment("OBX"))
         assert row["value_type"] == "CWE"
-        assert row["observation_value_code"] == "260373001"
-        assert row["observation_value_text"] == "Detected"
-        assert row["observation_value_coding_system"] == "SCT"
+        assert row["observation_value_cwe"] == "260373001"
+        assert row["observation_value_cwe_text"] == "Detected"
+        assert row["observation_value_cwe_coding_system"] == "SCT"
 
     def test_obx_multiple_value_types_in_message(self):
         msg = parse_first(load_sample("sample_oru.hl7"))

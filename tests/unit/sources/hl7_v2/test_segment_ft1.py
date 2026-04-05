@@ -18,7 +18,7 @@ class TestFT1Extraction:
         msg = parse_first(load_sample("sample_adt_comprehensive.hl7"))
         row = extract_segment(msg, "FT1", _extract_ft1)
         assert row["transaction_type"] == "CG"
-        assert row["transaction_code_id"] == "99285"
+        assert row["transaction_code"] == "99285"
         assert row["transaction_code_text"] == "Emergency dept visit, high severity"
         assert row["transaction_quantity"] == 1
         assert row["transaction_description"] == "Emergency Department Visit"
@@ -28,10 +28,10 @@ class TestFT1Extraction:
         segs = segments_of_type(msg, "FT1")
         assert len(segs) == 2
         row1 = _extract_ft1(segs[0])
-        assert row1["transaction_code_id"] == "27447"
+        assert row1["transaction_code"] == "27447"
         assert row1["transaction_batch_id"] == "BATCH001"
         row2 = _extract_ft1(segs[1])
-        assert row2["transaction_code_id"] == "01402"
+        assert row2["transaction_code"] == "01402"
         assert row2["transaction_description"] == "Anesthesia for Knee Surgery"
 
 
@@ -46,7 +46,7 @@ class TestFT1MissingFields:
         assert row["transaction_id"] is None
         assert row["transaction_batch_id"] is None
         assert row["transaction_type"] is None
-        assert row["transaction_code_id"] is None
+        assert row["transaction_code"] is None
         assert row["transaction_description"] is None
         assert row["transaction_quantity"] is None
 
@@ -58,6 +58,6 @@ class TestFT1MissingFields:
         row = _extract_ft1(msg.get_segment("FT1"))
         assert row["transaction_batch_id"] == "BATCH99"
         assert row["transaction_type"] == "CG"
-        assert row["transaction_code_id"] == "99213"
+        assert row["transaction_code"] == "99213"
         assert row["transaction_code_text"] == "Office Visit"
         assert row["transaction_description"] == "Office visit"
