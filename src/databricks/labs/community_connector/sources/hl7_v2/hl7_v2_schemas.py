@@ -17,7 +17,7 @@ Every table includes six common metadata columns:
     raw_segment       — raw pipe-delimited segment text for lossless recovery
 """
 
-from pyspark.sql.types import LongType, StringType, StructField, StructType
+from pyspark.sql.types import ArrayType, LongType, StringType, StructField, StructType
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -81,6 +81,29 @@ def _xpn_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
     ]
 
 
+_XPN_STRUCT = StructType([
+    StructField("family_name", StringType(), nullable=True),
+    StructField("given_name", StringType(), nullable=True),
+    StructField("middle_name", StringType(), nullable=True),
+    StructField("suffix", StringType(), nullable=True),
+    StructField("prefix", StringType(), nullable=True),
+    StructField("degree", StringType(), nullable=True),
+    StructField("name_type_code", StringType(), nullable=True),
+    StructField("name_representation_code", StringType(), nullable=True),
+    StructField("name_context", StringType(), nullable=True),
+    StructField("name_assembly_order", StringType(), nullable=True),
+    StructField("name_effective_date", StringType(), nullable=True),
+    StructField("name_expiration_date", StringType(), nullable=True),
+    StructField("professional_suffix", StringType(), nullable=True),
+    StructField("called_by", StringType(), nullable=True),
+])
+
+
+def _xpn_array_schema(column_name: str, label: str, field_ref: str) -> list[StructField]:
+    """XPN (Extended Person Name) — repeating field as ArrayType(StructType([...]))."""
+    return [StructField(column_name, ArrayType(_XPN_STRUCT, containsNull=True), nullable=True)]
+
+
 def _xcn_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
     """XCN (Extended Composite ID Number and Name for Persons) — 21 active component fields."""
     return [
@@ -142,6 +165,17 @@ def _ei_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
         _s(f"{prefix}_universal_id",       f"{label} universal ID ({field_ref}.3)"),
         _s(f"{prefix}_universal_id_type",  f"{label} universal ID type ({field_ref}.4)"),
     ]
+
+
+def _ei_array_schema(column_name: str, label: str, field_ref: str) -> list[StructField]:
+    """EI (Entity Identifier) — repeating field as ArrayType(StructType([...]))."""
+    ei_struct = StructType([
+        StructField("entity_identifier", StringType(), nullable=True),
+        StructField("namespace_id", StringType(), nullable=True),
+        StructField("universal_id", StringType(), nullable=True),
+        StructField("universal_id_type", StringType(), nullable=True),
+    ])
+    return [StructField(column_name, ArrayType(ei_struct, containsNull=True), nullable=True)]
 
 
 def _xon_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
@@ -413,10 +447,7 @@ MSH_SCHEMA = StructType(
         _s("character_set",                    "Character encoding used in the message (MSH-18), e.g. ASCII, UTF-8, 8859/1"),
         _s("principal_language",               "Primary language of the message content (MSH-19.1)"),
         _s("alt_character_set_handling",       "Alternate character set handling scheme (MSH-20)"),
-        _s("message_profile_identifier",       "Conformance profile entity identifier (MSH-21.1)"),
-        _s("message_profile_namespace_id",     "Namespace ID of the conformance profile (MSH-21.2)"),
-        _s("message_profile_universal_id",     "Universal ID (e.g. OID) of the conformance profile (MSH-21.3)"),
-        _s("message_profile_universal_id_type","Type of universal ID for the profile, e.g. ISO (MSH-21.4)"),
+        *_ei_array_schema("message_profile_identifiers", "Message profile identifiers", "MSH-21"),
     ]
     + _xon_schema("sending_responsible_org", "Sending responsible organization", "MSH-22")
     + _xon_schema("receiving_responsible_org", "Receiving responsible organization", "MSH-23")
@@ -440,8 +471,8 @@ PID_SCHEMA = StructType(
         _s("patient_external_id",           "External patient ID from a prior system (PID-2, deprecated in v2.7)"),
         *_cx_schema("patient_id", "Patient identifier", "PID-3"),
         _s("alternate_patient_id",          "Alternate patient identifier from a prior system (PID-4, deprecated in v2.7)"),
-        *_xpn_schema("patient_name", "Patient", "PID-5"),
-        *_xpn_schema("mothers_maiden", "Mother's maiden", "PID-6"),
+        *_xpn_array_schema("patient_names", "Patient names", "PID-5"),
+        *_xpn_array_schema("mothers_maiden_names", "Mother's maiden names", "PID-6"),
         _ts("date_of_birth",                "Date of birth parsed to timestamp (PID-7)"),
         *_cwe_schema("administrative_sex", "Administrative sex", "PID-8"),
         _s("patient_alias",                 "Alias name(s) for the patient (PID-9, deprecated in v2.7)"),
@@ -660,9 +691,8 @@ OBX_SCHEMA = StructType(
     + _cwe_schema("observation_id", "Observation identifier (CWE)", "OBX-3")
     + [
         _s("observation_sub_id",              "Sub-identifier to group related OBX rows, e.g. for waveform or panel data (OBX-4)"),
-        _s("observation_value",               "The result value composite (OBX-5), raw; use observation_value_cwe_* when value type is coded"),
+        _s("observation_value",               "The result value (OBX-5); data type is Varies — check value_type (OBX-2) to interpret"),
     ]
-    + _cwe_schema("observation_value_cwe", "Observation value (CWE, first repetition)", "OBX-5")
     + _cwe_schema("units", "Units of measure (CWE)", "OBX-6")
     + [
         _s("references_range",                "Normal or reference range for the result, e.g. 136-145 (OBX-7)"),
@@ -698,7 +728,9 @@ OBX_SCHEMA = StructType(
         _s("obx_action_code",                 "Action code (OBX-31, v2.9+)"),
     ]
     + _cwe_schema("observation_value_absent_reason", "Observation value absent reason (CWE)", "OBX-32")
-    + _ei_schema("observation_related_specimen", "Related specimen (EI)", "OBX-33")
+    + [
+        _s("observation_related_specimen",    "Related specimen identifier (OBX-33, type EIP — raw value)"),
+    ]
 )
 
 # ---------------------------------------------------------------------------
@@ -775,7 +807,7 @@ NK1_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
         _pk_i("set_id",                  "Sequence number of this next-of-kin record within the message; part of composite primary key (NK1-1)"),
-        *_xpn_schema("nk", "Next of kin", "NK1-2"),
+        *_xpn_array_schema("nk_names", "Next of kin names", "NK1-2"),
         _s("relationship",               "Relationship to patient composite (NK1-3), raw; use relationship_code_* CWE fields"),
     ]
     + _cwe_schema("relationship_code", "Relationship to patient", "NK1-3")
@@ -810,13 +842,13 @@ NK1_SCHEMA = StructType(
     ]
     + _cwe_schema("religion", "Religion", "NK1-25")
     + [
-        *_xpn_schema("mothers_maiden", "NK1 mother's maiden", "NK1-26"),
+        *_xpn_array_schema("mothers_maiden_names", "NK1 mother's maiden names", "NK1-26"),
     ]
     + _cwe_schema("nationality", "Nationality", "NK1-27")
     + _cwe_schema("ethnic_group", "Ethnic group", "NK1-28")
     + _cwe_schema("contact_reason", "Contact reason", "NK1-29")
     + [
-        *_xpn_schema("contact_person", "Contact person", "NK1-30"),
+        *_xpn_array_schema("contact_persons", "Contact persons", "NK1-30"),
     ]
     + _xtn_schema("contact_person_telephone", "Contact person telephone", "NK1-31")
     + _xad_schema("contact_persons_address", "Contact person address", "NK1-32")
@@ -980,7 +1012,7 @@ MRG_SCHEMA = StructType(
     + _cx_schema("prior_visit_number", "Prior visit number", "MRG-5")
     + _cx_schema("prior_alternate_visit_id", "Prior alternate visit ID", "MRG-6")
     + [
-        *_xpn_schema("prior_patient", "Prior patient", "MRG-7"),
+        *_xpn_array_schema("prior_patient_names", "Prior patient names", "MRG-7"),
     ]
 )
 
@@ -1008,7 +1040,7 @@ IAM_SCHEMA = StructType(
         _s("onset_date",                          "Allergy onset date (IAM-11)"),
         _s("onset_date_text",                     "Free-text onset date description (IAM-12)"),
         _ts("reported_datetime",                  "When the allergy was reported (IAM-13)"),
-        *_xpn_schema("reported_by", "Allergy reporter", "IAM-14"),
+        *_xpn_array_schema("reported_by_names", "Allergy reporter names", "IAM-14"),
     ]
     + _cwe_schema("relationship_to_patient_code", "Relationship to patient", "IAM-15")
     + _cwe_schema("alert_device_code", "Alert device code", "IAM-16")
@@ -1134,7 +1166,7 @@ ORC_SCHEMA = StructType(
     + [
         _s("advanced_beneficiary_notice_date",          "Advanced beneficiary notice date (ORC-32, v2.6+)"),
     ]
-    + _ei_schema("alternate_placer_order_number", "Alternate placer order number (EI)", "ORC-33")
+    + _cx_schema("alternate_placer_order_number", "Alternate placer order number (CX)", "ORC-33")
     + _ei_schema("order_workflow_profile", "Order workflow profile (EI)", "ORC-34")
     + [
         _s("orc_action_code",                           "Action code (ORC-35, v2.9+)"),
@@ -1234,7 +1266,7 @@ IN1_SCHEMA = StructType(
     + _xon_schema("insurance_company_name", "Insurance company name (XON)", "IN1-4")
     + _xad_schema("insurance_company_address", "Insurance company address", "IN1-5")
     + [
-        *_xpn_schema("insurance_co_contact", "Insurance contact", "IN1-6"),
+        *_xpn_array_schema("insurance_co_contacts", "Insurance contacts", "IN1-6"),
     ]
     + _xtn_schema("insurance_co_phone_number", "Insurance company phone", "IN1-7")
     + [
@@ -1248,7 +1280,7 @@ IN1_SCHEMA = StructType(
         _s("plan_expiration_date",             "Plan expiration date (IN1-13)"),
         _s("authorization_information",        "Authorization information (IN1-14.1)"),
         _s("plan_type",                        "Plan type (IN1-15)"),
-        *_xpn_schema("insured", "Insured person", "IN1-16"),
+        *_xpn_array_schema("insured_names", "Insured person names", "IN1-16"),
     ]
     + _cwe_schema("insureds_relationship_to_patient", "Insured's relationship to patient", "IN1-17")
     + [
@@ -1312,8 +1344,8 @@ GT1_SCHEMA = StructType(
     ]
     + _cx_schema("guarantor_number", "Guarantor number (CX)", "GT1-2")
     + [
-        *_xpn_schema("guarantor", "Guarantor", "GT1-3"),
-        *_xpn_schema("guarantor_spouse", "Guarantor spouse", "GT1-4"),
+        *_xpn_array_schema("guarantor_names", "Guarantor names", "GT1-3"),
+        *_xpn_array_schema("guarantor_spouse_names", "Guarantor spouse names", "GT1-4"),
     ]
     + _xad_schema("guarantor_address", "Guarantor address", "GT1-5")
     + _xtn_schema("guarantor_ph_num_home", "Guarantor home phone", "GT1-6")
@@ -1331,7 +1363,7 @@ GT1_SCHEMA = StructType(
         _s("guarantor_date_begin",                 "Guarantor start date (GT1-13)"),
         _s("guarantor_date_end",                   "Guarantor end date (GT1-14)"),
         _i("guarantor_priority",                   "Guarantor priority (GT1-15)"),
-        *_xpn_schema("guarantor_employer", "Guarantor employer", "GT1-16"),
+        *_xpn_array_schema("guarantor_employer_names", "Guarantor employer names", "GT1-16"),
     ]
     + _xad_schema("guarantor_employer_address", "Guarantor employer address", "GT1-17")
     + _xtn_schema("guarantor_employer_phone_number", "Guarantor employer phone", "GT1-18")
@@ -1373,12 +1405,12 @@ GT1_SCHEMA = StructType(
     ]
     + _cwe_schema("religion", "Religion", "GT1-41")
     + [
-        *_xpn_schema("gt1_mothers_maiden", "GT1 mother's maiden", "GT1-42"),
+        *_xpn_array_schema("gt1_mothers_maiden_names", "GT1 mother's maiden names", "GT1-42"),
     ]
     + _cwe_schema("nationality", "Nationality", "GT1-43")
     + _cwe_schema("ethnic_group", "Ethnic group", "GT1-44")
     + [
-        *_xpn_schema("gt1_contact_person", "GT1 contact person", "GT1-45"),
+        *_xpn_array_schema("gt1_contact_persons", "GT1 contact persons", "GT1-45"),
     ]
     + _xtn_schema("contact_persons_telephone_number", "Contact person phone", "GT1-46")
     + _cwe_schema("contact_reason", "Contact reason", "GT1-47")

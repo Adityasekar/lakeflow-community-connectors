@@ -145,6 +145,27 @@ def _xpn_fields(
     }
 
 
+def _xpn_array_fields(
+    seg: HL7Segment, field_n: int, column_name: str
+) -> dict:
+    """XPN (Extended Person Name) — all repetitions as a list of tuples."""
+    raw = seg.get_field(field_n)
+    if not raw:
+        return {column_name: None}
+    reps = raw.split(seg._enc.rep_sep)
+    result = []
+    for rep in reps:
+        if not rep:
+            continue
+        parts = rep.split(seg._enc.comp_sep)
+        gc = lambda i: _v(parts[i - 1]) if len(parts) >= i else None
+        result.append((
+            gc(1), gc(2), gc(3), gc(4), gc(5), gc(6), gc(7),
+            gc(8), gc(9), gc(11), gc(12), gc(13), gc(14), gc(15),
+        ))
+    return {column_name: result if result else None}
+
+
 def _xcn_fields(
     seg: HL7Segment, field_n: int, prefix: str, *, repeating: bool = True
 ) -> dict:
@@ -232,6 +253,28 @@ def _ei_fields(
         f"{prefix}_universal_id": gc(3),
         f"{prefix}_universal_id_type": gc(4),
     }
+
+
+def _ei_array_fields(
+    seg: HL7Segment, field_n: int, column_name: str
+) -> dict:
+    """EI (Entity Identifier) — all repetitions as a list of tuples."""
+    raw = seg.get_field(field_n)
+    if not raw:
+        return {column_name: None}
+    reps = raw.split(seg._enc.rep_sep)
+    result = []
+    for rep in reps:
+        if not rep:
+            continue
+        parts = rep.split(seg._enc.comp_sep)
+        result.append((
+            _v(parts[0]) if len(parts) > 0 else None,
+            _v(parts[1]) if len(parts) > 1 else None,
+            _v(parts[2]) if len(parts) > 2 else None,
+            _v(parts[3]) if len(parts) > 3 else None,
+        ))
+    return {column_name: result if result else None}
 
 
 def _xon_fields(
@@ -428,10 +471,7 @@ def _extract_msh(seg: HL7Segment) -> dict:
         "character_set": _v(seg.get_field(18)),
         "principal_language": _v(seg.get_component(19, 1)),
         "alt_character_set_handling": _v(seg.get_field(20)),
-        "message_profile_identifier": _v(seg.get_rep_component(21, 1, 1)),
-        "message_profile_namespace_id": _v(seg.get_rep_component(21, 1, 2)),
-        "message_profile_universal_id": _v(seg.get_rep_component(21, 1, 3)),
-        "message_profile_universal_id_type": _v(seg.get_rep_component(21, 1, 4)),
+        **_ei_array_fields(seg, 21, "message_profile_identifiers"),
         **_xon_fields(seg, 22, "sending_responsible_org", repeating=False),
         **_xon_fields(seg, 23, "receiving_responsible_org", repeating=False),
         **_hd_fields(seg, 24, "sending_network_address", repeating=False),
@@ -448,8 +488,8 @@ def _extract_pid(seg: HL7Segment) -> dict:
         "patient_external_id": _v(seg.get_field(2)),
         **_cx_fields(seg, 3, "patient_id"),
         "alternate_patient_id": _v(seg.get_first_repetition(4)),
-        **_xpn_fields(seg, 5, "patient_name"),
-        **_xpn_fields(seg, 6, "mothers_maiden"),
+        **_xpn_array_fields(seg, 5, "patient_names"),
+        **_xpn_array_fields(seg, 6, "mothers_maiden_names"),
         "date_of_birth": _parse_dtm(seg.get_field(7)),
         **_cwe_fields(seg, 8, "administrative_sex", repeating=False),
         "patient_alias": _v(seg.get_first_repetition(9)),
@@ -620,7 +660,6 @@ def _extract_obx(seg: HL7Segment) -> dict:
         **_cwe_fields(seg, 3, "observation_id", repeating=False),
         "observation_sub_id": _v(seg.get_field(4)),
         "observation_value": _v(seg.get_first_repetition(5)),
-        **_cwe_fields(seg, 5, "observation_value_cwe", repeating=True),
         **_cwe_fields(seg, 6, "units", repeating=False),
         "references_range": _v(seg.get_field(7)),
         "interpretation_codes": _v(seg.get_first_repetition(8)),
@@ -648,7 +687,7 @@ def _extract_obx(seg: HL7Segment) -> dict:
         "observation_sub_type": _v(seg.get_field(30)),
         "obx_action_code": _v(seg.get_field(31)),
         **_cwe_fields(seg, 32, "observation_value_absent_reason", repeating=False),
-        **_ei_fields(seg, 33, "observation_related_specimen", repeating=False),
+        "observation_related_specimen": _v(seg.get_field(33)),
     }
 
 
@@ -697,7 +736,7 @@ def _extract_dg1(seg: HL7Segment) -> dict:
 def _extract_nk1(seg: HL7Segment) -> dict:
     return {
         "set_id": _i(seg.get_field(1)) or 1,
-        **_xpn_fields(seg, 2, "nk"),
+        **_xpn_array_fields(seg, 2, "nk_names"),
         "relationship": _v(seg.get_field(3)),
         **_cwe_fields(seg, 3, "relationship_code", repeating=False),
         **_xad_fields(seg, 4, "address"),
@@ -722,11 +761,11 @@ def _extract_nk1(seg: HL7Segment) -> dict:
         "protection_indicator": _v(seg.get_field(23)),
         "student_indicator": _v(seg.get_field(24)),
         **_cwe_fields(seg, 25, "religion", repeating=False),
-        **_xpn_fields(seg, 26, "mothers_maiden"),
+        **_xpn_array_fields(seg, 26, "mothers_maiden_names"),
         **_cwe_fields(seg, 27, "nationality", repeating=False),
         **_cwe_fields(seg, 28, "ethnic_group", repeating=True),
         **_cwe_fields(seg, 29, "contact_reason", repeating=True),
-        **_xpn_fields(seg, 30, "contact_person"),
+        **_xpn_array_fields(seg, 30, "contact_persons"),
         **_xtn_fields(seg, 31, "contact_person_telephone"),
         **_xad_fields(seg, 32, "contact_persons_address"),
         **_cx_fields(seg, 33, "associated_party_identifiers"),
@@ -844,7 +883,7 @@ def _extract_mrg(seg: HL7Segment) -> dict:
         **_cx_fields(seg, 4, "prior_patient_id_mrg4", repeating=False),
         **_cx_fields(seg, 5, "prior_visit_number", repeating=False),
         **_cx_fields(seg, 6, "prior_alternate_visit_id", repeating=False),
-        **_xpn_fields(seg, 7, "prior_patient"),
+        **_xpn_array_fields(seg, 7, "prior_patient_names"),
     }
 
 
@@ -863,7 +902,7 @@ def _extract_iam(seg: HL7Segment) -> dict:
         "onset_date": _v(seg.get_field(11)),
         "onset_date_text": _v(seg.get_field(12)),
         "reported_datetime": _parse_dtm(seg.get_field(13)),
-        **_xpn_fields(seg, 14, "reported_by"),
+        **_xpn_array_fields(seg, 14, "reported_by_names"),
         **_cwe_fields(seg, 15, "relationship_to_patient_code", repeating=False),
         **_cwe_fields(seg, 16, "alert_device_code", repeating=False),
         **_cwe_fields(seg, 17, "allergy_clinical_status_code", repeating=False),
@@ -947,7 +986,7 @@ def _extract_orc(seg: HL7Segment) -> dict:
         **_cwe_fields(seg, 30, "enterer_authorization_mode", repeating=False),
         **_cwe_fields(seg, 31, "parent_universal_service_id", repeating=False),
         "advanced_beneficiary_notice_date": _v(seg.get_field(32)),
-        **_ei_fields(seg, 33, "alternate_placer_order_number", repeating=False),
+        **_cx_fields(seg, 33, "alternate_placer_order_number", repeating=False),
         **_ei_fields(seg, 34, "order_workflow_profile", repeating=False),
         "orc_action_code": _v(seg.get_field(35)),
         "order_status_date_range": _v(seg.get_field(36)),
@@ -1017,7 +1056,7 @@ def _extract_in1(seg: HL7Segment) -> dict:
         **_xon_fields(seg, 3, "insurance_company"),
         **_xon_fields(seg, 4, "insurance_company_name"),
         **_xad_fields(seg, 5, "insurance_company_address"),
-        **_xpn_fields(seg, 6, "insurance_co_contact"),
+        **_xpn_array_fields(seg, 6, "insurance_co_contacts"),
         **_xtn_fields(seg, 7, "insurance_co_phone_number"),
         "group_number": _v(seg.get_field(8)),
         **_xon_fields(seg, 9, "group_name"),
@@ -1027,7 +1066,7 @@ def _extract_in1(seg: HL7Segment) -> dict:
         "plan_expiration_date": _v(seg.get_field(13)),
         "authorization_information": _v(seg.get_component(14, 1)),
         "plan_type": _v(seg.get_field(15)),
-        **_xpn_fields(seg, 16, "insured"),
+        **_xpn_array_fields(seg, 16, "insured_names"),
         **_cwe_fields(seg, 17, "insureds_relationship_to_patient", repeating=False),
         "insureds_date_of_birth": _parse_dtm(seg.get_field(18)),
         **_xad_fields(seg, 19, "insureds_address"),
@@ -1074,8 +1113,8 @@ def _extract_gt1(seg: HL7Segment) -> dict:
     return {
         "set_id": _i(seg.get_field(1)) or 1,
         **_cx_fields(seg, 2, "guarantor_number"),
-        **_xpn_fields(seg, 3, "guarantor"),
-        **_xpn_fields(seg, 4, "guarantor_spouse"),
+        **_xpn_array_fields(seg, 3, "guarantor_names"),
+        **_xpn_array_fields(seg, 4, "guarantor_spouse_names"),
         **_xad_fields(seg, 5, "guarantor_address"),
         **_xtn_fields(seg, 6, "guarantor_ph_num_home"),
         **_xtn_fields(seg, 7, "guarantor_ph_num_business"),
@@ -1087,7 +1126,7 @@ def _extract_gt1(seg: HL7Segment) -> dict:
         "guarantor_date_begin": _v(seg.get_field(13)),
         "guarantor_date_end": _v(seg.get_field(14)),
         "guarantor_priority": _i(seg.get_field(15)),
-        **_xpn_fields(seg, 16, "guarantor_employer"),
+        **_xpn_array_fields(seg, 16, "guarantor_employer_names"),
         **_xad_fields(seg, 17, "guarantor_employer_address"),
         **_xtn_fields(seg, 18, "guarantor_employer_phone_number"),
         **_cx_fields(seg, 19, "guarantor_employee_id_number"),
@@ -1113,10 +1152,10 @@ def _extract_gt1(seg: HL7Segment) -> dict:
         "protection_indicator": _v(seg.get_field(39)),
         "student_indicator": _v(seg.get_field(40)),
         **_cwe_fields(seg, 41, "religion", repeating=False),
-        **_xpn_fields(seg, 42, "gt1_mothers_maiden"),
+        **_xpn_array_fields(seg, 42, "gt1_mothers_maiden_names"),
         **_cwe_fields(seg, 43, "nationality", repeating=False),
         **_cwe_fields(seg, 44, "ethnic_group", repeating=True),
-        **_xpn_fields(seg, 45, "gt1_contact_person"),
+        **_xpn_array_fields(seg, 45, "gt1_contact_persons"),
         **_xtn_fields(seg, 46, "contact_persons_telephone_number"),
         **_cwe_fields(seg, 47, "contact_reason", repeating=False),
         "contact_relationship": _v(seg.get_field(48)),

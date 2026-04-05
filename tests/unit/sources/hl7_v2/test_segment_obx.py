@@ -32,8 +32,7 @@ class TestOBXExtraction:
         segs = segments_of_type(msg, "OBX")
         row = _extract_obx(segs[0])
         assert row["value_type"] == "CWE"
-        assert row["observation_value_cwe"] == "U"
-        assert row["observation_value_cwe_text"] == "Unknown"
+        assert "U" in row["observation_value"]
 
     def test_gc_obx_structured_numeric(self):
         msg = parse_first(load_sample("sample_oru_gc_testing.hl7"))
@@ -86,16 +85,14 @@ class TestOBXMissingFields:
 
 
 class TestOBXEdgeCases:
-    def test_obx_coded_value_components(self):
+    def test_obx_coded_value_raw(self):
         msg = parse_message(
             "MSH|^~\\&|A|B|C|D|20240101||ORU^R01|1|P|2.5\r"
             "OBX|1|CWE|94500-6^COVID PCR^LN||260373001^Detected^SCT"
         )
         row = _extract_obx(msg.get_segment("OBX"))
         assert row["value_type"] == "CWE"
-        assert row["observation_value_cwe"] == "260373001"
-        assert row["observation_value_cwe_text"] == "Detected"
-        assert row["observation_value_cwe_coding_system"] == "SCT"
+        assert row["observation_value"] == "260373001^Detected^SCT"
 
     def test_obx_multiple_value_types_in_message(self):
         msg = parse_first(load_sample("sample_oru.hl7"))
