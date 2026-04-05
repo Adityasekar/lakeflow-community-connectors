@@ -148,7 +148,7 @@ def _xpn_fields(
 def _xpn_array_fields(
     seg: HL7Segment, field_n: int, column_name: str
 ) -> dict:
-    """XPN (Extended Person Name) — all repetitions as a list of tuples."""
+    """XPN (Extended Person Name) — all repetitions as a list of dicts."""
     raw = seg.get_field(field_n)
     if not raw:
         return {column_name: None}
@@ -159,10 +159,22 @@ def _xpn_array_fields(
             continue
         parts = rep.split(seg._enc.comp_sep)
         gc = lambda i: _v(parts[i - 1]) if len(parts) >= i else None
-        result.append((
-            gc(1), gc(2), gc(3), gc(4), gc(5), gc(6), gc(7),
-            gc(8), gc(9), gc(11), gc(12), gc(13), gc(14), gc(15),
-        ))
+        result.append({
+            "family_name": gc(1),
+            "given_name": gc(2),
+            "middle_name": gc(3),
+            "suffix": gc(4),
+            "prefix": gc(5),
+            "degree": gc(6),
+            "name_type_code": gc(7),
+            "name_representation_code": gc(8),
+            "name_context": gc(9),
+            "name_assembly_order": gc(11),
+            "name_effective_date": gc(12),
+            "name_expiration_date": gc(13),
+            "professional_suffix": gc(14),
+            "called_by": gc(15),
+        })
     return {column_name: result if result else None}
 
 
@@ -258,7 +270,7 @@ def _ei_fields(
 def _ei_array_fields(
     seg: HL7Segment, field_n: int, column_name: str
 ) -> dict:
-    """EI (Entity Identifier) — all repetitions as a list of tuples."""
+    """EI (Entity Identifier) — all repetitions as a list of dicts."""
     raw = seg.get_field(field_n)
     if not raw:
         return {column_name: None}
@@ -268,12 +280,12 @@ def _ei_array_fields(
         if not rep:
             continue
         parts = rep.split(seg._enc.comp_sep)
-        result.append((
-            _v(parts[0]) if len(parts) > 0 else None,
-            _v(parts[1]) if len(parts) > 1 else None,
-            _v(parts[2]) if len(parts) > 2 else None,
-            _v(parts[3]) if len(parts) > 3 else None,
-        ))
+        result.append({
+            "entity_identifier": _v(parts[0]) if len(parts) > 0 else None,
+            "namespace_id": _v(parts[1]) if len(parts) > 1 else None,
+            "universal_id": _v(parts[2]) if len(parts) > 2 else None,
+            "universal_id_type": _v(parts[3]) if len(parts) > 3 else None,
+        })
     return {column_name: result if result else None}
 
 
