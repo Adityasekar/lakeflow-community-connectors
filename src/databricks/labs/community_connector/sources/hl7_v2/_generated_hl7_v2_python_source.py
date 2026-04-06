@@ -519,6 +519,30 @@ def register_lakeflow_source(spark):
     # src/databricks/labs/community_connector/sources/hl7_v2/gcpreader.py
     ########################################################
 
+    def _field_sort_key(key: str) -> tuple:
+        """Convert an HL7 field key into a sortable tuple of ints.
+
+        '6.2'      → (6, 2)
+        '21[0].1'  → (21, 0, 1)
+        '0'        → (0,)
+        """
+        tokens = re.split(r"[\[\]\.]+", key)
+        result: list[int | str] = []
+        for t in tokens:
+            if not t:
+                continue
+            try:
+                result.append(int(t))
+            except ValueError:
+                result.append(t)
+        return tuple(result)
+
+
+    def sort_fields(fields: dict) -> dict:
+        """Return *fields* ordered by HL7 field number."""
+        return dict(sorted(fields.items(), key=lambda kv: _field_sort_key(kv[0])))
+
+
     def _load_service_account(value: str) -> dict:
         """Load service account info from a file path or inline JSON string."""
         path = Path(value)
@@ -601,6 +625,46 @@ def register_lakeflow_source(spark):
         return base64.b64decode(raw).decode("utf-8", errors="replace")
 
 
+    def _parse_field(fields: dict, idx: int, value: str) -> None:
+        """Parse a single HL7 field value (handling repeats and components) into *fields*."""
+        if not value:
+            return
+        repeats = value.split("~")
+        has_repeats = len(repeats) > 1
+        for r, repeat in enumerate(repeats):
+            components = repeat.split("^")
+            if len(components) == 1:
+                key = f"{idx}[{r}]" if has_repeats else str(idx)
+                fields[key] = components[0]
+            else:
+                for j, comp in enumerate(components, 1):
+                    if comp:
+                        prefix = f"{idx}[{r}]" if has_repeats else str(idx)
+                        fields[f"{prefix}.{j}"] = comp
+
+
+    def parse_segment(line: str) -> dict:
+        """Parse a raw HL7 pipe-delimited segment into ``{segmentId, fields}``
+        with fields sorted by field number."""
+        seg_type = line[:3]
+        fields: dict[str, str] = {"0": seg_type}
+
+        if seg_type == "MSH":
+            fields["1"] = line[3]
+            rest = line[4:]
+            parts = rest.split("|")
+            fields["2"] = parts[0]
+            for i, part in enumerate(parts[1:], 3):
+                _parse_field(fields, i, part)
+        else:
+            rest = line[4:] if len(line) > 3 and line[3] == "|" else line[3:]
+            parts = rest.split("|")
+            for i, part in enumerate(parts, 1):
+                _parse_field(fields, i, part)
+
+        return {"segmentId": seg_type, "raw": line, "fields": sort_fields(fields)}
+
+
     def print_message(idx: int, msg: dict, *, raw: bool = False) -> None:
         """Pretty-print a single HL7 API message."""
         print(f"\n{'=' * 60}")
@@ -623,8 +687,11 @@ def register_lakeflow_source(spark):
                 for line in hl7_text.replace("\r\n", "\r").replace("\n", "\r").split("\r"):
                     line = line.strip()
                     if line:
-                        seg_type = line[:3]
-                        print(f"    [{seg_type}] {line}")
+                        seg_id = line[:3]
+                        print(f"\n    [{seg_id}] {line}")
+                        parsed = parse_segment(line)
+                        for key, val in parsed["fields"].items():
+                            print(f"      {seg_id}-{key:12s} = {val}")
             else:
                 print("  (no data)")
 
@@ -643,6 +710,10 @@ def register_lakeflow_source(spark):
         parser.add_argument("--since", help="Only fetch messages after this timestamp (RFC3339)")
         parser.add_argument("--raw", action="store_true", help="Print raw base64 instead of decoded HL7")
         parser.add_argument("--json-out", action="store_true", help="Print full API response as JSON")
+        parser.add_argument(
+            "--parsed-json", action="store_true",
+            help="Print parsed segments as JSON with fields sorted by field number",
+        )
 
         args = parser.parse_args()
 
@@ -690,7 +761,30 @@ def register_lakeflow_source(spark):
         if args.json_out:
             print(json.dumps(messages, indent=2))
             return
-        print(messages)
+
+        if args.parsed_json:
+            for i, msg in enumerate(messages, 1):
+                hl7_text = decode_hl7(msg)
+                if not hl7_text:
+                    continue
+                segments = []
+                for line in hl7_text.replace("\r\n", "\r").replace("\n", "\r").split("\r"):
+                    line = line.strip()
+                    if line:
+                        segments.append(parse_segment(line))
+                output = {
+                    "message": i,
+                    "resourceName": msg.get("name", "N/A"),
+                    "sendTime": msg.get("sendTime", "N/A"),
+                    "createTime": msg.get("createTime", "N/A"),
+                    "messageType": msg.get("messageType", "N/A"),
+                    "patientIds": msg.get("patientIds", []),
+                    "labels": msg.get("labels", {}),
+                    "segments": segments,
+                }
+                print(json.dumps(output, indent=2))
+            return
+
         for i, msg in enumerate(messages, 1):
             print_message(i, msg, raw=args.raw)
 
@@ -1054,9 +1148,32 @@ def register_lakeflow_source(spark):
     ])
 
 
+    _CWE_STRUCT = StructType([
+        StructField("code", StringType(), nullable=True),
+        StructField("text", StringType(), nullable=True),
+        StructField("coding_system", StringType(), nullable=True),
+        StructField("alt_code", StringType(), nullable=True),
+        StructField("alt_text", StringType(), nullable=True),
+        StructField("alt_coding_system", StringType(), nullable=True),
+        StructField("coding_system_version", StringType(), nullable=True),
+        StructField("alt_coding_system_version", StringType(), nullable=True),
+        StructField("original_text", StringType(), nullable=True),
+    ])
+
+
     def _xpn_array_schema(column_name: str, label: str, field_ref: str) -> list[StructField]:
         """XPN (Extended Person Name) — repeating field as ArrayType(StructType([...]))."""
         return [StructField(column_name, ArrayType(_XPN_STRUCT, containsNull=True), nullable=True)]
+
+
+    def _cwe_array_schema(column_name: str, label: str, field_ref: str) -> list[StructField]:
+        """CWE (Coded With Exceptions) — repeating field as ArrayType(StructType([...]))."""
+        return [StructField(column_name, ArrayType(_CWE_STRUCT, containsNull=True), nullable=True)]
+
+
+    def _s_array(name: str, comment: str = "") -> StructField:
+        """ArrayType(StringType) for repeating simple (ID/IS) fields."""
+        return StructField(name, ArrayType(StringType(), containsNull=True), nullable=True)
 
 
     def _xcn_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
@@ -1241,7 +1358,8 @@ def register_lakeflow_source(spark):
         _s("message_timestamp", "Message creation date/time (MSH-7) in HL7 DTM format, e.g. 20240101120000"),
         _s("hl7_version",       "HL7 version string (MSH-12), e.g. 2.5.1"),
         _s("source_file",       "API resource name of the source HL7 message for traceability"),
-        _s("send_time",         "Message send time from the GCP Healthcare API in RFC3339 format; used as incremental cursor"),
+        _s("send_time",         "Original HL7 message send time from the GCP Healthcare API in RFC3339 format"),
+        _s("create_time",       "GCP Healthcare API createTime (when the message was ingested into the HL7v2 store); used as incremental cursor"),
         _s("raw_segment",       "Raw pipe-delimited text of this HL7 segment for lossless recovery and debugging"),
     ]
 
@@ -1399,8 +1517,10 @@ def register_lakeflow_source(spark):
             _s("accept_acknowledgment_type",       "Conditions requiring an accept (transport-level) acknowledgment (MSH-15): AL, NE, SU, ER"),
             _s("application_acknowledgment_type",  "Conditions requiring an application-level acknowledgment (MSH-16): AL, NE, SU, ER"),
             _s("country_code",                     "ISO 3166 three-letter country code for the message (MSH-17)"),
-            _s("character_set",                    "Character encoding used in the message (MSH-18), e.g. ASCII, UTF-8, 8859/1"),
-            _s("principal_language",               "Primary language of the message content (MSH-19.1)"),
+            _s_array("character_set",              "Character encoding used in the message (MSH-18, ID repeatable), e.g. ASCII, UTF-8, 8859/1"),
+        ]
+        + _cwe_schema("principal_language", "Principal language of the message (CWE)", "MSH-19")
+        + [
             _s("alt_character_set_handling",       "Alternate character set handling scheme (MSH-20)"),
             *_ei_array_schema("message_profile_identifiers", "Message profile identifiers", "MSH-21"),
         ]
@@ -1409,10 +1529,8 @@ def register_lakeflow_source(spark):
         + _hd_schema("sending_network_address", "Sending network address", "MSH-24")
         + _hd_schema("receiving_network_address", "Receiving network address", "MSH-25")
         + _cwe_schema("security_classification_tag", "Security classification", "MSH-26")
-        + _cwe_schema("security_handling_instructions", "Security handling instructions (first repetition)", "MSH-27")
-        + [
-            _s("special_access_restriction",                           "Special access restriction instructions (MSH-28, ST, v2.7.1+)"),
-        ]
+        + _cwe_array_schema("security_handling_instructions", "Security handling instructions (CWE, repeatable)", "MSH-27")
+        + _cwe_array_schema("special_access_restriction", "Special access restriction instructions (CWE, repeatable, v2.7.1+)", "MSH-28")
     )
 
     # ---------------------------------------------------------------------------
@@ -1473,7 +1591,9 @@ def register_lakeflow_source(spark):
         _METADATA_FIELDS
         + [
             _i("set_id",                       "Sequence number when multiple PV1 segments appear (PV1-1)"),
-            _s("patient_class",                "Patient classification (PV1-2): I=Inpatient, O=Outpatient, E=Emergency, R=Recurring, B=Obstetrics"),
+        ]
+        + _cwe_schema("patient_class", "Patient class (CWE)", "PV1-2")
+        + [
             _s("assigned_patient_location",    "Full assigned bed location composite (PV1-3), raw; use location_* fields"),
             _s("location_point_of_care",       "Unit or nursing station, e.g. ICU, MED (PV1-3.1)"),
             _s("location_room",                "Room number within the unit (PV1-3.2)"),
@@ -1481,8 +1601,8 @@ def register_lakeflow_source(spark):
             _s("location_facility",            "Facility where the patient is located (PV1-3.4)"),
             _s("location_status",              "Bed status, e.g. C=Closed, H=Housekeeping, O=Occupied (PV1-3.5)"),
             _s("location_type",                "Person location type, e.g. N=Nursing Unit, C=Clinic (PV1-3.9)"),
-            _s("admission_type",               "Admission type (PV1-4): A=Accident, E=Emergency, L=Labor, R=Routine, N=Newborn"),
         ]
+        + _cwe_schema("admission_type", "Admission type (CWE)", "PV1-4")
         + _cx_schema("preadmit_number", "Pre-admission number", "PV1-5")
         + [
             _s("prior_patient_location",       "Prior bed location before transfer (PV1-6), raw composite"),
@@ -1490,25 +1610,25 @@ def register_lakeflow_source(spark):
         + _xcn_schema("attending_doctor", "Attending physician", "PV1-7")
         + _xcn_schema("referring_doctor", "Referring physician", "PV1-8")
         + _xcn_schema("consulting_doctor", "Consulting physician", "PV1-9")
+        + _cwe_schema("hospital_service", "Hospital service (CWE)", "PV1-10")
         + [
-            _s("hospital_service",             "Type of service the patient is under, e.g. MED, SUR, ORT (PV1-10)"),
             _s("temporary_location",           "Temporary bed/location during a transfer (PV1-11)"),
             _s("preadmit_test_indicator",      "Whether pre-admission testing was performed: Y or N (PV1-12)"),
             _s("readmission_indicator",        "Whether this is a readmission: R=Readmission (PV1-13)"),
-            _s("admit_source",                 "Source of the admission, e.g. 1=Physician referral, 7=Emergency room (PV1-14)"),
-            _s("ambulatory_status",            "Ambulatory status code, e.g. A1=No functional limitations (PV1-15)"),
-            _s("vip_indicator",                "VIP flag for special patient handling (PV1-16)"),
         ]
+        + _cwe_schema("admit_source", "Admit source (CWE)", "PV1-14")
+        + _cwe_array_schema("ambulatory_status", "Ambulatory status (CWE, repeatable)", "PV1-15")
+        + _cwe_schema("vip_indicator", "VIP indicator (CWE)", "PV1-16")
         + _xcn_schema("admitting_doctor", "Admitting physician", "PV1-17")
-        + [
-            _s("patient_type",                 "Site-defined patient type or classification (PV1-18)"),
-        ]
+        + _cwe_schema("patient_type", "Patient type (CWE)", "PV1-18")
         + _cx_schema("visit_number", "Visit/encounter number", "PV1-19")
         + [
             _s("financial_class",              "Financial class or payer category (PV1-20.1)"),
-            _s("charge_price_indicator",       "Price indicator for charging purposes (PV1-21)"),
-            _s("courtesy_code",                "Courtesy code for billing discounts (PV1-22)"),
-            _s("credit_rating",                "Patient credit rating (PV1-23)"),
+        ]
+        + _cwe_schema("charge_price_indicator", "Charge price indicator (CWE)", "PV1-21")
+        + _cwe_schema("courtesy_code", "Courtesy code (CWE)", "PV1-22")
+        + _cwe_schema("credit_rating", "Credit rating (CWE)", "PV1-23")
+        + [
             _s("contract_code",                "Contract type code(s) (PV1-24)"),
             _s("contract_effective_date",      "Effective date of the contract (PV1-25)"),
             _s("contract_amount",              "Amount owed under the contract (PV1-26)"),
@@ -1521,14 +1641,18 @@ def register_lakeflow_source(spark):
             _s("bad_debt_recovery_amount",     "Amount recovered from bad debt (PV1-33)"),
             _s("delete_account_indicator",     "Whether the account has been marked for deletion (PV1-34)"),
             _s("delete_account_date",          "Date the account was deleted (PV1-35)"),
-            _s("discharge_disposition",        "Discharge disposition code (PV1-36): 01=Home, 02=SNF, 07=AMA, 20=Expired"),
+        ]
+        + _cwe_schema("discharge_disposition", "Discharge disposition (CWE)", "PV1-36")
+        + [
             _s("discharged_to_location",       "Location to which the patient was discharged (PV1-37.1)"),
         ]
         + _cwe_schema("diet_type", "Diet type", "PV1-38")
+        + _cwe_schema("servicing_facility", "Servicing facility (CWE)", "PV1-39")
         + [
-            _s("servicing_facility",           "Facility providing the service (PV1-39)"),
             _s("bed_status",                   "Current bed status (PV1-40, deprecated in v2.6)"),
-            _s("account_status",               "Account status code (PV1-41)"),
+        ]
+        + _cwe_schema("account_status", "Account status (CWE)", "PV1-41")
+        + [
             _s("pending_location",             "Bed reserved for a pending admission or transfer (PV1-42)"),
             _s("prior_temporary_location",     "Prior temporary location before the current transfer (PV1-43)"),
             _ts("admit_datetime",              "Date/time of admission parsed to timestamp (PV1-44)"),
@@ -1539,9 +1663,7 @@ def register_lakeflow_source(spark):
             _s("total_payments",               "Total payments received for the visit (PV1-49)"),
         ]
         + _cx_schema("alternate_visit_id", "Alternate visit ID", "PV1-50")
-        + [
-            _s("visit_indicator",              "Visit indicator: V=Visit level, A=Account level (PV1-51)"),
-        ]
+        + _cwe_schema("visit_indicator", "Visit indicator (CWE)", "PV1-51")
         + _xcn_schema("other_healthcare_provider", "Other healthcare provider", "PV1-52")
         + [
             _s("service_episode_description",   "Free-text description of the service episode (PV1-53, v2.8+)"),
@@ -1588,7 +1710,7 @@ def register_lakeflow_source(spark):
             _s("filler_field_2",                      "Filler-defined field 2 for local use (OBR-21)"),
             _ts("results_rpt_status_chng_datetime",   "Date/time the result status last changed, parsed to timestamp (OBR-22)"),
             _s("charge_to_practice",                  "Charge information for billing purposes (OBR-23)"),
-            _s("diagnostic_service_section_id",       "Lab section performing the test, e.g. HM=Hematology, CH=Chemistry (OBR-24)"),
+            _s("diagnostic_service_section",          "Diagnostic service section ID code (OBR-24)"),
             _s("result_status",                       "Overall result status (OBR-25): F=Final, P=Preliminary, C=Corrected, X=Canceled"),
             _s("parent_result",                       "Reference to the parent result for reflex tests (OBR-26)"),
             _s("quantity_timing",                     "Quantity and timing of the order (OBR-27, deprecated in v2.7)"),
@@ -1596,9 +1718,9 @@ def register_lakeflow_source(spark):
         + _xcn_schema("result_copies_to", "Result copy-to provider", "OBR-28")
         + [
             _s("parent_placer_order_number",          "Placer order number of the parent order for reflex tests (OBR-29.1)"),
-            _s("transportation_mode",                 "How the specimen is to be transported to the lab (OBR-30)"),
+            _s("transportation_mode",                  "Specimen transportation mode code (OBR-30)"),
         ]
-        + _cwe_schema("reason_for_study", "Reason for study (CWE, first repetition)", "OBR-31")
+        + _cwe_array_schema("reason_for_study", "Reason for study (CWE, repeatable)", "OBR-31")
         + [
             _s("principal_result_interpreter",        "Provider who interpreted the result (OBR-32.1)"),
             _s("assistant_result_interpreter",        "Assistant provider who helped interpret the result (OBR-33.1)"),
@@ -1611,8 +1733,8 @@ def register_lakeflow_source(spark):
         + _cwe_schema("collectors_comment", "Collector comment (CWE, first repetition)", "OBR-39")
         + _cwe_schema("transport_arrangement_responsibility", "Transport arrangement responsibility (CWE)", "OBR-40")
         + [
-            _s("transport_arranged",                  "Whether transport has been arranged: A=Arranged, N=Not arranged (OBR-41)"),
-            _s("escort_required",                     "Whether an escort is required for specimen transport: R=Required (OBR-42)"),
+            _s("transport_arranged",                   "Transport arranged indicator code (OBR-41)"),
+            _s("escort_required",                      "Escort required indicator code (OBR-42)"),
         ]
         + _cwe_schema("planned_patient_transport_comment", "Planned patient transport comment (CWE, first repetition)", "OBR-43")
         + _cwe_schema("procedure_code", "Procedure code (CWE)", "OBR-44")
@@ -1620,9 +1742,7 @@ def register_lakeflow_source(spark):
         + _cwe_schema("placer_supplemental_service_info", "Placer supplemental service info (CWE, first repetition)", "OBR-46")
         + _cwe_schema("filler_supplemental_service_info", "Filler supplemental service info (CWE, first repetition)", "OBR-47")
         + _cwe_schema("medically_necessary_dup_proc_reason", "Medically necessary duplicate procedure reason (CWE)", "OBR-48")
-        + [
-            _s("result_handling",                     "How the result should be handled, e.g. F=Film-with-patient (OBR-49.1, v2.6+)"),
-        ]
+        + _cwe_schema("result_handling", "Result handling (CWE)", "OBR-49")
         + _cwe_schema("parent_universal_service_id", "Parent universal service ID (CWE)", "OBR-50")
         + _ei_schema("observation_group", "Observation group (EI)", "OBR-51")
         + _ei_schema("parent_observation_group", "Parent observation group (EI)", "OBR-52")
@@ -1651,9 +1771,11 @@ def register_lakeflow_source(spark):
         + _cwe_schema("units", "Units of measure (CWE)", "OBX-6")
         + [
             _s("references_range",                "Normal or reference range for the result, e.g. 136-145 (OBX-7)"),
-            _s("interpretation_codes",            "Abnormality flag (OBX-8): N=Normal, H=High, L=Low, A=Abnormal, C=Critical"),
+        ]
+        + _cwe_array_schema("interpretation_codes", "Interpretation codes (CWE, repeatable)", "OBX-8")
+        + [
             _s("probability",                     "Probability of the observation being correct, 0-1 scale (OBX-9)"),
-            _s("nature_of_abnormal_test",         "What the reference range is based on: A=Age, S=Sex, R=Race (OBX-10)"),
+            _s_array("nature_of_abnormal_test",   "What the reference range is based on: A=Age, S=Sex, R=Race (OBX-10, ID repeatable)"),
             _s("observation_result_status",       "Result status (OBX-11): F=Final, P=Preliminary, C=Corrected, X=Deleted, R=Not yet verified"),
             _ts("effective_date_of_ref_range",    "Date the reference range became effective, parsed to timestamp (OBX-12)"),
             _s("user_defined_access_checks",      "Site-defined access control value (OBX-13)"),
@@ -1787,9 +1909,7 @@ def register_lakeflow_source(spark):
         + _cwe_schema("ambulatory_status", "Ambulatory status", "NK1-18")
         + _cwe_schema("citizenship", "Citizenship", "NK1-19")
         + _cwe_schema("primary_language", "Primary language", "NK1-20")
-        + [
-            _s("living_arrangement",         "Living arrangement code (NK1-21): A=Alone, F=Family, I=Institution, R=Relative"),
-        ]
+        + _cwe_schema("living_arrangement", "Living arrangement (CWE)", "NK1-21")
         + _cwe_schema("publicity_code", "Publicity / consent to contact", "NK1-22")
         + [
             _s("protection_indicator",       "Whether to restrict sharing of this contact's information: Y or N (NK1-23)"),
@@ -1829,7 +1949,7 @@ def register_lakeflow_source(spark):
     EVN_SCHEMA = StructType(
         _METADATA_FIELDS
         + [
-            _s("event_type_code",          "Event type code (EVN-1, deprecated in v2.5); superseded by MSH-9 trigger event"),
+            _s("event_type_code",          "Event type code, withdrawn as of v2.7 (EVN-1)"),
             _ts("recorded_datetime",       "Date/time the event was recorded in the sending system, parsed to timestamp (EVN-2)"),
             _ts("date_time_planned_event", "Date/time the event was planned to occur, parsed to timestamp (EVN-3)"),
         ]
@@ -1847,17 +1967,15 @@ def register_lakeflow_source(spark):
 
     PD1_SCHEMA = StructType(
         _METADATA_FIELDS
-        + [
-            _s("living_dependency",                        "Living dependency code (PD1-1): S=Spouse, M=Medical Supervision, C=Small Children"),
-            _s("living_arrangement",                       "Living arrangement code (PD1-2): A=Alone, F=Family, I=Institution, R=Relative, U=Unknown"),
-        ]
+        + _cwe_array_schema("living_dependency", "Living dependency (CWE, repeatable)", "PD1-1")
+        + _cwe_schema("living_arrangement", "Living arrangement (CWE)", "PD1-2")
         + _xon_schema("patient_primary_facility", "Primary care facility", "PD1-3")
         + _xcn_schema("patient_primary_care_provider", "Primary care provider", "PD1-4")
+        + _cwe_schema("student_indicator", "Student indicator (CWE)", "PD1-5")
+        + _cwe_schema("handicap", "Handicap (CWE)", "PD1-6")
+        + _cwe_schema("living_will_code", "Living will code (CWE)", "PD1-7")
+        + _cwe_schema("organ_donor_code", "Organ donor code (CWE)", "PD1-8")
         + [
-            _s("student_indicator",                        "Student status (PD1-5): F=Full-time, P=Part-time, N=Not a student"),
-            _s("handicap",                                 "Handicap code (PD1-6)"),
-            _s("living_will_code",                         "Living will status (PD1-7): Y=Yes, F=Filed with patient, N=No"),
-            _s("organ_donor_code",                         "Organ donor status (PD1-8): Y=Yes, F=Filed with patient, N=No"),
             _s("separate_bill",                            "Separate billing flag Y/N (PD1-9)"),
         ]
         + _cx_schema("duplicate_patient", "Duplicate patient", "PD1-10")
@@ -1868,13 +1986,15 @@ def register_lakeflow_source(spark):
         ]
         + _xon_schema("place_of_worship", "Place of worship", "PD1-14")
         + _cwe_schema("advance_directive_code", "Advance directive", "PD1-15")
+        + _cwe_schema("immunization_registry_status", "Immunization registry status (CWE)", "PD1-16")
         + [
-            _s("immunization_registry_status",             "Immunization registry status (PD1-16): A=Active, I=Inactive, P=Protected"),
             _s("immunization_registry_status_effective_date", "Immunization registry status effective date (PD1-17)"),
             _s("publicity_code_effective_date",            "Publicity code effective date (PD1-18)"),
-            _s("military_branch",                          "Military branch (PD1-19): USA=Army, USN=Navy, USAF=Air Force, USMC=Marines"),
-            _s("military_rank_grade",                      "Military rank or grade (PD1-20)"),
-            _s("military_status",                          "Military status (PD1-21): ACT=Active duty, RET=Retired, DEC=Deceased"),
+        ]
+        + _cwe_schema("military_branch", "Military branch (CWE)", "PD1-19")
+        + _cwe_schema("military_rank_grade", "Military rank/grade (CWE)", "PD1-20")
+        + _cwe_schema("military_status", "Military status (CWE)", "PD1-21")
+        + [
             _s("advance_directive_last_verified_date",     "Date advance directive was last verified (PD1-22, v2.8+)"),
             _s("retirement_date",                          "Date the patient retired (PD1-23, v2.9+)"),
         ]
@@ -1895,7 +2015,9 @@ def register_lakeflow_source(spark):
         + [
             _s("patient_valuables",                        "Patient's valuable items description (PV2-5)"),
             _s("patient_valuables_location",               "Location of patient's valuables (PV2-6)"),
-            _s("visit_user_code",                          "Visit user code (PV2-7)"),
+        ]
+        + _cwe_array_schema("visit_user_code", "Visit user code (CWE, repeatable)", "PV2-7")
+        + [
             _ts("expected_admit_datetime",                 "Expected admission date/time (PV2-8)"),
             _ts("expected_discharge_datetime",             "Expected discharge date/time (PV2-9)"),
             _i("estimated_length_of_inpatient_stay",       "Estimated length of inpatient stay in days (PV2-10)"),
@@ -1908,24 +2030,28 @@ def register_lakeflow_source(spark):
             _s("employment_illness_related_indicator",     "Employment illness related Y/N (PV2-15)"),
             _s("purge_status_code",                        "Purge status code (PV2-16)"),
             _s("purge_status_date",                        "Purge status date (PV2-17)"),
-            _s("special_program_code",                     "Special program code (PV2-18)"),
+        ]
+        + _cwe_schema("special_program_code", "Special program code (CWE)", "PV2-18")
+        + [
             _s("retention_indicator",                      "Retention indicator Y/N (PV2-19)"),
             _i("expected_number_of_insurance_plans",       "Expected number of insurance plans (PV2-20)"),
-            _s("visit_publicity_code",                     "Visit publicity code (PV2-21)"),
-            _s("visit_protection_indicator",               "Visit protection indicator Y/N (PV2-22)"),
+        ]
+        + _cwe_schema("visit_publicity_code", "Visit publicity code (CWE)", "PV2-21")
+        + [
+            _s("visit_protection_indicator",               "Visit protection indicator ID code (PV2-22)"),
         ]
         + _xon_schema("clinic_organization", "Clinic organization", "PV2-23")
+        + _cwe_schema("patient_status_code", "Patient status code (CWE)", "PV2-24")
+        + _cwe_schema("visit_priority_code", "Visit priority code (CWE)", "PV2-25")
         + [
-            _s("patient_status_code",                      "Patient status code (PV2-24)"),
-            _s("visit_priority_code",                      "Visit priority code (PV2-25)"),
             _s("previous_treatment_date",                  "Previous treatment date (PV2-26)"),
             _s("expected_discharge_disposition",            "Expected discharge disposition (PV2-27)"),
             _s("signature_on_file_date",                   "Signature on file date (PV2-28)"),
             _s("first_similar_illness_date",               "Date of first similar illness (PV2-29)"),
         ]
         + _cwe_schema("patient_charge_adjustment_code", "Patient charge adjustment code", "PV2-30")
+        + _cwe_schema("recurring_service_code", "Recurring service code (CWE)", "PV2-31")
         + [
-            _s("recurring_service_code",                   "Recurring service code (PV2-31)"),
             _s("billing_media_code",                       "Billing media code Y/N (PV2-32)"),
             _ts("expected_surgery_datetime",               "Expected surgery date/time (PV2-33)"),
             _s("military_partnership_code",                "Military partnership code Y/N (PV2-34)"),
@@ -1938,16 +2064,16 @@ def register_lakeflow_source(spark):
         + _cwe_schema("admission_level_of_care_code", "Admission level of care code", "PV2-40")
         + _cwe_schema("precaution_code", "Precaution code", "PV2-41")
         + _cwe_schema("patient_condition_code", "Patient condition code", "PV2-42")
-        + [
-            _s("living_will_code_pv2",                     "Living will code (PV2-43); same values as PD1-7"),
-            _s("organ_donor_code_pv2",                     "Organ donor code (PV2-44); same values as PD1-8"),
-        ]
+        + _cwe_schema("living_will_code_pv2", "Living will code (CWE)", "PV2-43")
+        + _cwe_schema("organ_donor_code_pv2", "Organ donor code (CWE)", "PV2-44")
         + _cwe_schema("advance_directive_code_pv2", "Advance directive", "PV2-45")
         + [
             _s("patient_status_effective_date",            "Patient status effective date (PV2-46)"),
             _ts("expected_loa_return_datetime",            "Expected leave of absence return date/time (PV2-47)"),
             _ts("expected_preadmission_testing_datetime",  "Expected pre-admission testing date/time (PV2-48)"),
-            _s("notify_clergy_code",                       "Notify clergy code (PV2-49)"),
+        ]
+        + _cwe_array_schema("notify_clergy_code", "Notify clergy code (CWE, repeatable)", "PV2-49")
+        + [
             _s("advance_directive_last_verified_date_pv2", "Date advance directive was last verified (PV2-50, v2.9+)"),
         ]
     )
@@ -2893,6 +3019,45 @@ def register_lakeflow_source(spark):
         }
 
 
+    def _cwe_array_fields(
+        seg: HL7Segment, field_n: int, column_name: str
+    ) -> dict:
+        """CWE (Coded With Exceptions) — all repetitions as a list of dicts."""
+        raw = seg.get_field(field_n)
+        if not raw:
+            return {column_name: None}
+        reps = raw.split(seg._enc.rep_sep)
+        result = []
+        for rep in reps:
+            if not rep:
+                continue
+            parts = rep.split(seg._enc.comp_sep)
+            gc = lambda i, _p=parts: _v(_p[i - 1]) if len(_p) >= i else None
+            result.append({
+                "code": gc(1),
+                "text": gc(2),
+                "coding_system": gc(3),
+                "alt_code": gc(4),
+                "alt_text": gc(5),
+                "alt_coding_system": gc(6),
+                "coding_system_version": gc(7),
+                "alt_coding_system_version": gc(8),
+                "original_text": gc(9),
+            })
+        return {column_name: result if result else None}
+
+
+    def _s_array_fields(
+        seg: HL7Segment, field_n: int, column_name: str
+    ) -> dict:
+        """Simple repeatable ID/IS field — all repetitions as a list of strings."""
+        raw = seg.get_field(field_n)
+        if not raw:
+            return {column_name: None}
+        reps = [_v(r) for r in raw.split(seg._enc.rep_sep) if r]
+        return {column_name: reps if reps else None}
+
+
     def _ei_array_fields(
         seg: HL7Segment, field_n: int, column_name: str
     ) -> dict:
@@ -3054,7 +3219,7 @@ def register_lakeflow_source(spark):
     # ---------------------------------------------------------------------------
 
 
-    def _metadata(msh: HL7Segment | None, source_file: str, send_time: str) -> dict:
+    def _metadata(msh: HL7Segment | None, source_file: str, send_time: str, create_time: str) -> dict:
         if msh is None:
             return {
                 "message_id": None,
@@ -3062,6 +3227,7 @@ def register_lakeflow_source(spark):
                 "hl7_version": None,
                 "source_file": source_file,
                 "send_time": send_time,
+                "create_time": create_time,
             }
         return {
             "message_id": _v(msh.get_field(10)),
@@ -3069,6 +3235,7 @@ def register_lakeflow_source(spark):
             "hl7_version": _v(msh.get_field(12)),
             "source_file": source_file,
             "send_time": send_time,
+            "create_time": create_time,
         }
 
 
@@ -3106,8 +3273,8 @@ def register_lakeflow_source(spark):
             "accept_acknowledgment_type": _v(seg.get_field(15)),
             "application_acknowledgment_type": _v(seg.get_field(16)),
             "country_code": _v(seg.get_field(17)),
-            "character_set": _v(seg.get_field(18)),
-            "principal_language": _v(seg.get_component(19, 1)),
+            **_s_array_fields(seg, 18, "character_set"),
+            **_cwe_fields(seg, 19, "principal_language", repeating=False),
             "alt_character_set_handling": _v(seg.get_field(20)),
             **_ei_array_fields(seg, 21, "message_profile_identifiers"),
             **_xon_fields(seg, 22, "sending_responsible_org", repeating=False),
@@ -3115,8 +3282,8 @@ def register_lakeflow_source(spark):
             **_hd_fields(seg, 24, "sending_network_address", repeating=False),
             **_hd_fields(seg, 25, "receiving_network_address", repeating=False),
             **_cwe_fields(seg, 26, "security_classification_tag", repeating=False),
-            **_cwe_fields(seg, 27, "security_handling_instructions", repeating=True),
-            "special_access_restriction": _v(seg.get_field(28)),
+            **_cwe_array_fields(seg, 27, "security_handling_instructions"),
+            **_cwe_array_fields(seg, 28, "special_access_restriction"),
         }
 
 
@@ -3168,7 +3335,7 @@ def register_lakeflow_source(spark):
     def _extract_pv1(seg: HL7Segment) -> dict:
         return {
             "set_id": _i(seg.get_field(1)),
-            "patient_class": _v(seg.get_field(2)),
+            **_cwe_fields(seg, 2, "patient_class", repeating=False),
             "assigned_patient_location": _v(seg.get_field(3)),
             "location_point_of_care": _v(seg.get_component(3, 1)),
             "location_room": _v(seg.get_component(3, 2)),
@@ -3176,26 +3343,26 @@ def register_lakeflow_source(spark):
             "location_facility": _v(seg.get_component(3, 4)),
             "location_status": _v(seg.get_component(3, 5)),
             "location_type": _v(seg.get_component(3, 9)),
-            "admission_type": _v(seg.get_field(4)),
+            **_cwe_fields(seg, 4, "admission_type", repeating=False),
             **_cx_fields(seg, 5, "preadmit_number", repeating=False),
             "prior_patient_location": _v(seg.get_field(6)),
             **_xcn_fields(seg, 7, "attending_doctor"),
             **_xcn_fields(seg, 8, "referring_doctor"),
             **_xcn_fields(seg, 9, "consulting_doctor"),
-            "hospital_service": _v(seg.get_field(10)),
+            **_cwe_fields(seg, 10, "hospital_service", repeating=False),
             "temporary_location": _v(seg.get_field(11)),
             "preadmit_test_indicator": _v(seg.get_field(12)),
             "readmission_indicator": _v(seg.get_field(13)),
-            "admit_source": _v(seg.get_field(14)),
-            "ambulatory_status": _v(seg.get_first_repetition(15)),
-            "vip_indicator": _v(seg.get_field(16)),
+            **_cwe_fields(seg, 14, "admit_source", repeating=False),
+            **_cwe_array_fields(seg, 15, "ambulatory_status"),
+            **_cwe_fields(seg, 16, "vip_indicator", repeating=False),
             **_xcn_fields(seg, 17, "admitting_doctor"),
-            "patient_type": _v(seg.get_field(18)),
+            **_cwe_fields(seg, 18, "patient_type", repeating=False),
             **_cx_fields(seg, 19, "visit_number", repeating=False),
             "financial_class": _v(seg.get_rep_component(20, 1, 1)),
-            "charge_price_indicator": _v(seg.get_field(21)),
-            "courtesy_code": _v(seg.get_field(22)),
-            "credit_rating": _v(seg.get_field(23)),
+            **_cwe_fields(seg, 21, "charge_price_indicator", repeating=False),
+            **_cwe_fields(seg, 22, "courtesy_code", repeating=False),
+            **_cwe_fields(seg, 23, "credit_rating", repeating=False),
             "contract_code": _v(seg.get_first_repetition(24)),
             "contract_effective_date": _v(seg.get_first_repetition(25)),
             "contract_amount": _v(seg.get_first_repetition(26)),
@@ -3208,12 +3375,12 @@ def register_lakeflow_source(spark):
             "bad_debt_recovery_amount": _v(seg.get_field(33)),
             "delete_account_indicator": _v(seg.get_field(34)),
             "delete_account_date": _v(seg.get_field(35)),
-            "discharge_disposition": _v(seg.get_field(36)),
+            **_cwe_fields(seg, 36, "discharge_disposition", repeating=False),
             "discharged_to_location": _v(seg.get_component(37, 1)),
             **_cwe_fields(seg, 38, "diet_type", repeating=False),
-            "servicing_facility": _v(seg.get_field(39)),
+            **_cwe_fields(seg, 39, "servicing_facility", repeating=False),
             "bed_status": _v(seg.get_field(40)),
-            "account_status": _v(seg.get_field(41)),
+            **_cwe_fields(seg, 41, "account_status", repeating=False),
             "pending_location": _v(seg.get_field(42)),
             "prior_temporary_location": _v(seg.get_field(43)),
             "admit_datetime": _parse_dtm(seg.get_first_repetition(44)),
@@ -3223,7 +3390,7 @@ def register_lakeflow_source(spark):
             "total_adjustments": _v(seg.get_field(48)),
             "total_payments": _v(seg.get_field(49)),
             **_cx_fields(seg, 50, "alternate_visit_id", repeating=False),
-            "visit_indicator": _v(seg.get_field(51)),
+            **_cwe_fields(seg, 51, "visit_indicator", repeating=False),
             **_xcn_fields(seg, 52, "other_healthcare_provider"),
             "service_episode_description": _v(seg.get_field(53)),
             **_ei_fields(seg, 54, "service_episode_identifier", repeating=False),
@@ -3256,14 +3423,14 @@ def register_lakeflow_source(spark):
             "filler_field_2": _v(seg.get_field(21)),
             "results_rpt_status_chng_datetime": _parse_dtm(seg.get_field(22)),
             "charge_to_practice": _v(seg.get_field(23)),
-            "diagnostic_service_section_id": _v(seg.get_field(24)),
+            "diagnostic_service_section": _v(seg.get_field(24)),
             "result_status": _v(seg.get_field(25)),
             "parent_result": _v(seg.get_field(26)),
             "quantity_timing": _v(seg.get_first_repetition(27)),
             **_xcn_fields(seg, 28, "result_copies_to"),
             "parent_placer_order_number": _v(seg.get_component(29, 1)),
             "transportation_mode": _v(seg.get_field(30)),
-            **_cwe_fields(seg, 31, "reason_for_study", repeating=True),
+            **_cwe_array_fields(seg, 31, "reason_for_study"),
             "principal_result_interpreter": _v(seg.get_component(32, 1)),
             "assistant_result_interpreter": _v(seg.get_rep_component(33, 1, 1)),
             "technician": _v(seg.get_rep_component(34, 1, 1)),
@@ -3281,7 +3448,7 @@ def register_lakeflow_source(spark):
             **_cwe_fields(seg, 46, "placer_supplemental_service_info", repeating=True),
             **_cwe_fields(seg, 47, "filler_supplemental_service_info", repeating=True),
             **_cwe_fields(seg, 48, "medically_necessary_dup_proc_reason", repeating=False),
-            "result_handling": _v(seg.get_component(49, 1)),
+            **_cwe_fields(seg, 49, "result_handling", repeating=False),
             **_cwe_fields(seg, 50, "parent_universal_service_id", repeating=False),
             **_ei_fields(seg, 51, "observation_group", repeating=False),
             **_ei_fields(seg, 52, "parent_observation_group", repeating=False),
@@ -3300,9 +3467,9 @@ def register_lakeflow_source(spark):
             "observation_value": _v(seg.get_first_repetition(5)),
             **_cwe_fields(seg, 6, "units", repeating=False),
             "references_range": _v(seg.get_field(7)),
-            "interpretation_codes": _v(seg.get_first_repetition(8)),
+            **_cwe_array_fields(seg, 8, "interpretation_codes"),
             "probability": _v(seg.get_field(9)),
-            "nature_of_abnormal_test": _v(seg.get_first_repetition(10)),
+            **_s_array_fields(seg, 10, "nature_of_abnormal_test"),
             "observation_result_status": _v(seg.get_field(11)),
             "effective_date_of_ref_range": _parse_dtm(seg.get_field(12)),
             "user_defined_access_checks": _v(seg.get_field(13)),
@@ -3394,7 +3561,7 @@ def register_lakeflow_source(spark):
             **_cwe_fields(seg, 18, "ambulatory_status", repeating=True),
             **_cwe_fields(seg, 19, "citizenship", repeating=True),
             **_cwe_fields(seg, 20, "primary_language", repeating=False),
-            "living_arrangement": _v(seg.get_field(21)),
+            **_cwe_fields(seg, 21, "living_arrangement", repeating=False),
             **_cwe_fields(seg, 22, "publicity_code", repeating=False),
             "protection_indicator": _v(seg.get_field(23)),
             "student_indicator": _v(seg.get_field(24)),
@@ -3432,14 +3599,14 @@ def register_lakeflow_source(spark):
 
     def _extract_pd1(seg: HL7Segment) -> dict:
         return {
-            "living_dependency": _v(seg.get_first_repetition(1)),
-            "living_arrangement": _v(seg.get_field(2)),
+            **_cwe_array_fields(seg, 1, "living_dependency"),
+            **_cwe_fields(seg, 2, "living_arrangement", repeating=False),
             **_xon_fields(seg, 3, "patient_primary_facility"),
             **_xcn_fields(seg, 4, "patient_primary_care_provider"),
-            "student_indicator": _v(seg.get_field(5)),
-            "handicap": _v(seg.get_field(6)),
-            "living_will_code": _v(seg.get_field(7)),
-            "organ_donor_code": _v(seg.get_field(8)),
+            **_cwe_fields(seg, 5, "student_indicator", repeating=False),
+            **_cwe_fields(seg, 6, "handicap", repeating=False),
+            **_cwe_fields(seg, 7, "living_will_code", repeating=False),
+            **_cwe_fields(seg, 8, "organ_donor_code", repeating=False),
             "separate_bill": _v(seg.get_field(9)),
             **_cx_fields(seg, 10, "duplicate_patient"),
             **_cwe_fields(seg, 11, "publicity_code", repeating=False),
@@ -3447,12 +3614,12 @@ def register_lakeflow_source(spark):
             "protection_indicator_effective_date": _v(seg.get_field(13)),
             **_xon_fields(seg, 14, "place_of_worship"),
             **_cwe_fields(seg, 15, "advance_directive_code", repeating=True),
-            "immunization_registry_status": _v(seg.get_field(16)),
+            **_cwe_fields(seg, 16, "immunization_registry_status", repeating=False),
             "immunization_registry_status_effective_date": _v(seg.get_field(17)),
             "publicity_code_effective_date": _v(seg.get_field(18)),
-            "military_branch": _v(seg.get_field(19)),
-            "military_rank_grade": _v(seg.get_field(20)),
-            "military_status": _v(seg.get_field(21)),
+            **_cwe_fields(seg, 19, "military_branch", repeating=False),
+            **_cwe_fields(seg, 20, "military_rank_grade", repeating=False),
+            **_cwe_fields(seg, 21, "military_status", repeating=False),
             "advance_directive_last_verified_date": _v(seg.get_field(22)),
             "retirement_date": _v(seg.get_field(23)),
         }
@@ -3466,7 +3633,7 @@ def register_lakeflow_source(spark):
             **_cwe_fields(seg, 4, "transfer_reason", repeating=False),
             "patient_valuables": _v(seg.get_first_repetition(5)),
             "patient_valuables_location": _v(seg.get_field(6)),
-            "visit_user_code": _v(seg.get_first_repetition(7)),
+            **_cwe_array_fields(seg, 7, "visit_user_code"),
             "expected_admit_datetime": _parse_dtm(seg.get_field(8)),
             "expected_discharge_datetime": _parse_dtm(seg.get_field(9)),
             "estimated_length_of_inpatient_stay": _i(seg.get_field(10)),
@@ -3477,20 +3644,20 @@ def register_lakeflow_source(spark):
             "employment_illness_related_indicator": _v(seg.get_field(15)),
             "purge_status_code": _v(seg.get_field(16)),
             "purge_status_date": _v(seg.get_field(17)),
-            "special_program_code": _v(seg.get_field(18)),
+            **_cwe_fields(seg, 18, "special_program_code", repeating=False),
             "retention_indicator": _v(seg.get_field(19)),
             "expected_number_of_insurance_plans": _i(seg.get_field(20)),
-            "visit_publicity_code": _v(seg.get_field(21)),
+            **_cwe_fields(seg, 21, "visit_publicity_code", repeating=False),
             "visit_protection_indicator": _v(seg.get_field(22)),
             **_xon_fields(seg, 23, "clinic_organization"),
-            "patient_status_code": _v(seg.get_field(24)),
-            "visit_priority_code": _v(seg.get_field(25)),
+            **_cwe_fields(seg, 24, "patient_status_code", repeating=False),
+            **_cwe_fields(seg, 25, "visit_priority_code", repeating=False),
             "previous_treatment_date": _v(seg.get_field(26)),
             "expected_discharge_disposition": _v(seg.get_field(27)),
             "signature_on_file_date": _v(seg.get_field(28)),
             "first_similar_illness_date": _v(seg.get_field(29)),
             **_cwe_fields(seg, 30, "patient_charge_adjustment_code", repeating=False),
-            "recurring_service_code": _v(seg.get_field(31)),
+            **_cwe_fields(seg, 31, "recurring_service_code", repeating=False),
             "billing_media_code": _v(seg.get_field(32)),
             "expected_surgery_datetime": _parse_dtm(seg.get_field(33)),
             "military_partnership_code": _v(seg.get_field(34)),
@@ -3502,13 +3669,13 @@ def register_lakeflow_source(spark):
             **_cwe_fields(seg, 40, "admission_level_of_care_code", repeating=False),
             **_cwe_fields(seg, 41, "precaution_code", repeating=True),
             **_cwe_fields(seg, 42, "patient_condition_code", repeating=False),
-            "living_will_code_pv2": _v(seg.get_field(43)),
-            "organ_donor_code_pv2": _v(seg.get_field(44)),
+            **_cwe_fields(seg, 43, "living_will_code_pv2", repeating=False),
+            **_cwe_fields(seg, 44, "organ_donor_code_pv2", repeating=False),
             **_cwe_fields(seg, 45, "advance_directive_code_pv2", repeating=True),
             "patient_status_effective_date": _v(seg.get_field(46)),
             "expected_loa_return_datetime": _parse_dtm(seg.get_field(47)),
             "expected_preadmission_testing_datetime": _parse_dtm(seg.get_field(48)),
-            "notify_clergy_code": _v(seg.get_first_repetition(49)),
+            **_cwe_array_fields(seg, 49, "notify_clergy_code"),
             "advance_directive_last_verified_date_pv2": _v(seg.get_field(50)),
         }
 
@@ -4053,10 +4220,10 @@ def register_lakeflow_source(spark):
 
         * ``gcp`` (default) — fetches from a Google Cloud Healthcare API HL7v2 store.
         * ``delta`` — reads from a Bronze Delta table containing pre-loaded HL7
-          messages with columns ``data`` (raw text), ``sendTime``, and optionally ``name``.
+          messages with columns ``data`` (raw text), ``createTime``, and optionally ``name``.
 
         Each HL7 segment type is a separate table.  Incremental loading is driven
-        by ``sendTime`` using a sliding time-window.
+        by ``createTime`` using a sliding time-window.
 
         GCP mode connection options:
             project_id, location, dataset_id, hl7v2_store_id, service_account_json
@@ -4082,7 +4249,7 @@ def register_lakeflow_source(spark):
             super().__init__(options)
             self._source_type = options.get("source_type", "gcp").lower()
             self._init_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            self._oldest_send_time: str | None = None
+            self._oldest_create_time: str | None = None
 
             if self._source_type == "delta":
                 self._init_delta(options)
@@ -4257,7 +4424,7 @@ def register_lakeflow_source(spark):
                 pks = ["message_id"]
             return {
                 "ingestion_type": "append",
-                "cursor_field": "send_time",
+                "cursor_field": "create_time",
                 "primary_keys": pks,
                 "description": TABLE_DESCRIPTIONS.get(segment_type, ""),
             }
@@ -4267,7 +4434,7 @@ def register_lakeflow_source(spark):
         ) -> tuple[Iterator[dict], dict]:
             """Sliding time-window incremental read.
 
-            Fetches all messages whose ``sendTime`` falls in
+            Fetches all messages whose ``createTime`` falls in
             ``(since, since + window_seconds]``, parses them, and returns rows
             for the requested segment type.  The cursor advances to the window
             end regardless of whether data was found, ensuring forward progress.
@@ -4282,7 +4449,7 @@ def register_lakeflow_source(spark):
             if not since:
                 since = table_options.get("start_timestamp")
             if not since:
-                since = self._peek_oldest_send_time()
+                since = self._peek_oldest_create_time()
             if not since:
                 print(
                     f"[HL7v2] read_table({table_name}): no start cursor resolved "
@@ -4330,37 +4497,37 @@ def register_lakeflow_source(spark):
                     "For custom/Z-segments, provide 'segment_type' in table_options."
                 )
 
-        def _peek_oldest_send_time(self) -> str | None:
-            """Auto-discover the earliest sendTime by fetching the first message.
+        def _peek_oldest_create_time(self) -> str | None:
+            """Auto-discover the earliest createTime by fetching the first message.
 
             The result is cached for the lifetime of this connector instance since
             the oldest message never changes once discovered.
             """
-            if self._oldest_send_time is not None:
-                return self._oldest_send_time
+            if self._oldest_create_time is not None:
+                return self._oldest_create_time
 
             if self._source_type == "delta":
-                self._oldest_send_time = self._peek_oldest_send_time_delta()
-                return self._oldest_send_time
+                self._oldest_create_time = self._peek_oldest_create_time_delta()
+                return self._oldest_create_time
 
             body = self._api_get({
                 "view": "FULL",
                 "pageSize": "1",
-                "orderBy": "sendTime asc",
+                "orderBy": "createTime asc",
             })
             messages = body.get("hl7V2Messages", [])
             if messages:
-                ts = messages[0].get("sendTime")
+                ts = messages[0].get("createTime")
                 if ts:
                     dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
                     dt -= timedelta(seconds=1)
                     ts = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-                self._oldest_send_time = ts
-            return self._oldest_send_time
+                self._oldest_create_time = ts
+            return self._oldest_create_time
 
         def _fetch_messages_in_window(self, since: str, until: str) -> list[dict]:
-            """Fetch all API messages with sendTime in (since, until]."""
-            filter_str = f'sendTime > "{since}" AND sendTime <= "{until}"'
+            """Fetch all API messages with createTime in (since, until]."""
+            filter_str = f'createTime > "{since}" AND createTime <= "{until}"'
             messages: list[dict] = []
             page_token: str | None = None
 
@@ -4369,7 +4536,7 @@ def register_lakeflow_source(spark):
                     "view": "FULL",
                     "pageSize": str(_MAX_PAGE_SIZE),
                     "filter": filter_str,
-                    "orderBy": "sendTime asc",
+                    "orderBy": "createTime asc",
                 }
                 if page_token:
                     params["pageToken"] = page_token
@@ -4429,17 +4596,17 @@ def register_lakeflow_source(spark):
             try:
                 stmt = (
                     f"SELECT data, "
-                    f"date_format(sendTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") AS sendTime, "
+                    f"date_format(createTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") AS createTime, "
                     f"name "
                     f"FROM {self._delta_table} "
-                    f"ORDER BY sendTime"
+                    f"ORDER BY createTime"
                 )
                 data_array = self._execute_delta_sql(stmt)
                 rows = []
                 for row in data_array:
                     rows.append({
                         "data": row[0] or "",
-                        "sendTime": row[1] or "",
+                        "createTime": row[1] or "",
                         "name": row[2] if len(row) > 2 else "",
                     })
                 self._delta_cache = rows
@@ -4465,13 +4632,13 @@ def register_lakeflow_source(spark):
                 ) from exc
 
         def _fetch_messages_from_delta(self, since: str, until: str) -> list[dict]:
-            """Fetch messages with sendTime in (since, until].
+            """Fetch messages with createTime in (since, until].
 
             In ``preload`` mode, filters the in-memory cache.
             In ``per_window`` mode, issues a live SQL query scoped to the window.
 
             Returns a list of dicts with the same shape as the GCP API response
-            (keys: ``data``, ``sendTime``, ``name``) so that ``_parse_api_messages``
+            (keys: ``data``, ``createTime``, ``name``) so that ``_parse_api_messages``
             works unchanged.
             """
             if self._delta_query_mode == "per_window":
@@ -4486,53 +4653,53 @@ def register_lakeflow_source(spark):
 
             return [
                 row for row in self._delta_cache
-                if since < str(row.get("sendTime", "")) <= until
+                if since < str(row.get("createTime", "")) <= until
             ]
 
         def _fetch_messages_from_delta_live(self, since: str, until: str) -> list[dict]:
             """Issue a live SQL query for messages in (since, until]."""
             stmt = (
                 f"SELECT data, "
-                f"date_format(sendTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") AS sendTime, "
+                f"date_format(createTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") AS createTime, "
                 f"name "
                 f"FROM {self._delta_table} "
-                f"WHERE date_format(sendTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") > '{since}' "
-                f"  AND date_format(sendTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") <= '{until}' "
-                f"ORDER BY sendTime"
+                f"WHERE date_format(createTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") > '{since}' "
+                f"  AND date_format(createTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") <= '{until}' "
+                f"ORDER BY createTime"
             )
             data_array = self._execute_delta_sql(stmt)
             return [
                 {
                     "data": row[0] or "",
-                    "sendTime": row[1] or "",
+                    "createTime": row[1] or "",
                     "name": row[2] if len(row) > 2 else "",
                 }
                 for row in data_array
             ]
 
-        def _peek_oldest_send_time_delta(self) -> str | None:
-            """Return the earliest sendTime from the Delta table.
+        def _peek_oldest_create_time_delta(self) -> str | None:
+            """Return the earliest createTime from the Delta table.
 
             In ``preload`` mode, reads from the in-memory cache.
-            In ``per_window`` mode, issues a ``SELECT MIN(sendTime)`` query.
+            In ``per_window`` mode, issues a ``SELECT MIN(createTime)`` query.
             """
             if self._delta_query_mode == "per_window":
-                return self._peek_oldest_send_time_delta_live()
+                return self._peek_oldest_create_time_delta_live()
 
             if self._delta_cache is None:
                 print(
-                    f"[HL7v2 Delta] _peek_oldest_send_time_delta: cache is None. "
+                    f"[HL7v2 Delta] _peek_oldest_create_time_delta: cache is None. "
                     f"Preload error: {self._delta_preload_error}"
                 )
                 return None
             if len(self._delta_cache) == 0:
                 print(
-                    f"[HL7v2 Delta] _peek_oldest_send_time_delta: cache is empty "
+                    f"[HL7v2 Delta] _peek_oldest_create_time_delta: cache is empty "
                     f"(0 rows returned from {self._delta_table})"
                 )
                 return None
 
-            first_ts = str(self._delta_cache[0].get("sendTime", ""))
+            first_ts = str(self._delta_cache[0].get("createTime", ""))
             if not first_ts:
                 return None
 
@@ -4540,10 +4707,10 @@ def register_lakeflow_source(spark):
             dt -= timedelta(seconds=1)
             return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        def _peek_oldest_send_time_delta_live(self) -> str | None:
-            """Discover the earliest sendTime via a live SQL query."""
+        def _peek_oldest_create_time_delta_live(self) -> str | None:
+            """Discover the earliest createTime via a live SQL query."""
             stmt = (
-                f"SELECT date_format(MIN(sendTime), \"yyyy-MM-dd'T'HH:mm:ss'Z'\") "
+                f"SELECT date_format(MIN(createTime), \"yyyy-MM-dd'T'HH:mm:ss'Z'\") "
                 f"FROM {self._delta_table}"
             )
             data_array = self._execute_delta_sql(stmt)
@@ -4569,6 +4736,7 @@ def register_lakeflow_source(spark):
 
             for msg_data in api_messages:
                 send_time = msg_data.get("sendTime", "")
+                create_time = msg_data.get("createTime", "") or send_time
                 raw_data = msg_data.get("data", "")
                 if not raw_data:
                     continue
@@ -4583,7 +4751,7 @@ def register_lakeflow_source(spark):
                     if msg is None:
                         continue
                     msh = msg.get_segment("MSH")
-                    meta = _metadata(msh, source_name, send_time)
+                    meta = _metadata(msh, source_name, send_time, create_time)
 
                     if segment_type == "MSH":
                         if msh is not None:

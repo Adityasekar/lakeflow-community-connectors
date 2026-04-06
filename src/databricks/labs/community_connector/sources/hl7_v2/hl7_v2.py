@@ -5,7 +5,7 @@ Supported source modes (configured via ``source_type`` connection option):
 * ``gcp`` (default) — fetches messages from a Google Cloud Healthcare API
   HL7v2 store via REST.
 * ``delta`` — reads pre-loaded messages from a Bronze Delta table.  The table
-  must contain columns ``data`` (raw HL7 pipe-delimited text), ``sendTime``
+  must contain columns ``data`` (raw HL7 pipe-delimited text), ``createTime``
   (RFC3339 string), and optionally ``name`` (source identifier).
 
 Each HL7 segment type becomes its own table (msh, pid, pv1, obr, obx, …).
@@ -13,7 +13,7 @@ Each HL7 segment type becomes its own table (msh, pid, pv1, obr, obx, …).
 Schemas follow the HL7 v2.9 specification (the latest version, which is a
 superset of all prior versions).
 
-Incremental cursor: ``sendTime`` (RFC3339 timestamp).
+Incremental cursor: ``createTime`` (RFC3339 timestamp).
 The connector uses a sliding time-window strategy to bound each micro-batch.
 """
 
@@ -267,6 +267,45 @@ def _ei_fields(
     }
 
 
+def _cwe_array_fields(
+    seg: HL7Segment, field_n: int, column_name: str
+) -> dict:
+    """CWE (Coded With Exceptions) — all repetitions as a list of dicts."""
+    raw = seg.get_field(field_n)
+    if not raw:
+        return {column_name: None}
+    reps = raw.split(seg._enc.rep_sep)
+    result = []
+    for rep in reps:
+        if not rep:
+            continue
+        parts = rep.split(seg._enc.comp_sep)
+        gc = lambda i, _p=parts: _v(_p[i - 1]) if len(_p) >= i else None
+        result.append({
+            "code": gc(1),
+            "text": gc(2),
+            "coding_system": gc(3),
+            "alt_code": gc(4),
+            "alt_text": gc(5),
+            "alt_coding_system": gc(6),
+            "coding_system_version": gc(7),
+            "alt_coding_system_version": gc(8),
+            "original_text": gc(9),
+        })
+    return {column_name: result if result else None}
+
+
+def _s_array_fields(
+    seg: HL7Segment, field_n: int, column_name: str
+) -> dict:
+    """Simple repeatable ID/IS field — all repetitions as a list of strings."""
+    raw = seg.get_field(field_n)
+    if not raw:
+        return {column_name: None}
+    reps = [_v(r) for r in raw.split(seg._enc.rep_sep) if r]
+    return {column_name: reps if reps else None}
+
+
 def _ei_array_fields(
     seg: HL7Segment, field_n: int, column_name: str
 ) -> dict:
@@ -428,7 +467,7 @@ def _xad_fields(
 # ---------------------------------------------------------------------------
 
 
-def _metadata(msh: HL7Segment | None, source_file: str, send_time: str) -> dict:
+def _metadata(msh: HL7Segment | None, source_file: str, send_time: str, create_time: str) -> dict:
     if msh is None:
         return {
             "message_id": None,
@@ -436,6 +475,7 @@ def _metadata(msh: HL7Segment | None, source_file: str, send_time: str) -> dict:
             "hl7_version": None,
             "source_file": source_file,
             "send_time": send_time,
+            "create_time": create_time,
         }
     return {
         "message_id": _v(msh.get_field(10)),
@@ -443,6 +483,7 @@ def _metadata(msh: HL7Segment | None, source_file: str, send_time: str) -> dict:
         "hl7_version": _v(msh.get_field(12)),
         "source_file": source_file,
         "send_time": send_time,
+        "create_time": create_time,
     }
 
 
@@ -480,8 +521,8 @@ def _extract_msh(seg: HL7Segment) -> dict:
         "accept_acknowledgment_type": _v(seg.get_field(15)),
         "application_acknowledgment_type": _v(seg.get_field(16)),
         "country_code": _v(seg.get_field(17)),
-        "character_set": _v(seg.get_field(18)),
-        "principal_language": _v(seg.get_component(19, 1)),
+        **_s_array_fields(seg, 18, "character_set"),
+        **_cwe_fields(seg, 19, "principal_language", repeating=False),
         "alt_character_set_handling": _v(seg.get_field(20)),
         **_ei_array_fields(seg, 21, "message_profile_identifiers"),
         **_xon_fields(seg, 22, "sending_responsible_org", repeating=False),
@@ -489,8 +530,8 @@ def _extract_msh(seg: HL7Segment) -> dict:
         **_hd_fields(seg, 24, "sending_network_address", repeating=False),
         **_hd_fields(seg, 25, "receiving_network_address", repeating=False),
         **_cwe_fields(seg, 26, "security_classification_tag", repeating=False),
-        **_cwe_fields(seg, 27, "security_handling_instructions", repeating=True),
-        "special_access_restriction": _v(seg.get_field(28)),
+        **_cwe_array_fields(seg, 27, "security_handling_instructions"),
+        **_cwe_array_fields(seg, 28, "special_access_restriction"),
     }
 
 
@@ -542,7 +583,7 @@ def _extract_pid(seg: HL7Segment) -> dict:
 def _extract_pv1(seg: HL7Segment) -> dict:
     return {
         "set_id": _i(seg.get_field(1)),
-        "patient_class": _v(seg.get_field(2)),
+        **_cwe_fields(seg, 2, "patient_class", repeating=False),
         "assigned_patient_location": _v(seg.get_field(3)),
         "location_point_of_care": _v(seg.get_component(3, 1)),
         "location_room": _v(seg.get_component(3, 2)),
@@ -550,26 +591,26 @@ def _extract_pv1(seg: HL7Segment) -> dict:
         "location_facility": _v(seg.get_component(3, 4)),
         "location_status": _v(seg.get_component(3, 5)),
         "location_type": _v(seg.get_component(3, 9)),
-        "admission_type": _v(seg.get_field(4)),
+        **_cwe_fields(seg, 4, "admission_type", repeating=False),
         **_cx_fields(seg, 5, "preadmit_number", repeating=False),
         "prior_patient_location": _v(seg.get_field(6)),
         **_xcn_fields(seg, 7, "attending_doctor"),
         **_xcn_fields(seg, 8, "referring_doctor"),
         **_xcn_fields(seg, 9, "consulting_doctor"),
-        "hospital_service": _v(seg.get_field(10)),
+        **_cwe_fields(seg, 10, "hospital_service", repeating=False),
         "temporary_location": _v(seg.get_field(11)),
         "preadmit_test_indicator": _v(seg.get_field(12)),
         "readmission_indicator": _v(seg.get_field(13)),
-        "admit_source": _v(seg.get_field(14)),
-        "ambulatory_status": _v(seg.get_first_repetition(15)),
-        "vip_indicator": _v(seg.get_field(16)),
+        **_cwe_fields(seg, 14, "admit_source", repeating=False),
+        **_cwe_array_fields(seg, 15, "ambulatory_status"),
+        **_cwe_fields(seg, 16, "vip_indicator", repeating=False),
         **_xcn_fields(seg, 17, "admitting_doctor"),
-        "patient_type": _v(seg.get_field(18)),
+        **_cwe_fields(seg, 18, "patient_type", repeating=False),
         **_cx_fields(seg, 19, "visit_number", repeating=False),
         "financial_class": _v(seg.get_rep_component(20, 1, 1)),
-        "charge_price_indicator": _v(seg.get_field(21)),
-        "courtesy_code": _v(seg.get_field(22)),
-        "credit_rating": _v(seg.get_field(23)),
+        **_cwe_fields(seg, 21, "charge_price_indicator", repeating=False),
+        **_cwe_fields(seg, 22, "courtesy_code", repeating=False),
+        **_cwe_fields(seg, 23, "credit_rating", repeating=False),
         "contract_code": _v(seg.get_first_repetition(24)),
         "contract_effective_date": _v(seg.get_first_repetition(25)),
         "contract_amount": _v(seg.get_first_repetition(26)),
@@ -582,12 +623,12 @@ def _extract_pv1(seg: HL7Segment) -> dict:
         "bad_debt_recovery_amount": _v(seg.get_field(33)),
         "delete_account_indicator": _v(seg.get_field(34)),
         "delete_account_date": _v(seg.get_field(35)),
-        "discharge_disposition": _v(seg.get_field(36)),
+        **_cwe_fields(seg, 36, "discharge_disposition", repeating=False),
         "discharged_to_location": _v(seg.get_component(37, 1)),
         **_cwe_fields(seg, 38, "diet_type", repeating=False),
-        "servicing_facility": _v(seg.get_field(39)),
+        **_cwe_fields(seg, 39, "servicing_facility", repeating=False),
         "bed_status": _v(seg.get_field(40)),
-        "account_status": _v(seg.get_field(41)),
+        **_cwe_fields(seg, 41, "account_status", repeating=False),
         "pending_location": _v(seg.get_field(42)),
         "prior_temporary_location": _v(seg.get_field(43)),
         "admit_datetime": _parse_dtm(seg.get_first_repetition(44)),
@@ -597,7 +638,7 @@ def _extract_pv1(seg: HL7Segment) -> dict:
         "total_adjustments": _v(seg.get_field(48)),
         "total_payments": _v(seg.get_field(49)),
         **_cx_fields(seg, 50, "alternate_visit_id", repeating=False),
-        "visit_indicator": _v(seg.get_field(51)),
+        **_cwe_fields(seg, 51, "visit_indicator", repeating=False),
         **_xcn_fields(seg, 52, "other_healthcare_provider"),
         "service_episode_description": _v(seg.get_field(53)),
         **_ei_fields(seg, 54, "service_episode_identifier", repeating=False),
@@ -630,14 +671,14 @@ def _extract_obr(seg: HL7Segment) -> dict:
         "filler_field_2": _v(seg.get_field(21)),
         "results_rpt_status_chng_datetime": _parse_dtm(seg.get_field(22)),
         "charge_to_practice": _v(seg.get_field(23)),
-        "diagnostic_service_section_id": _v(seg.get_field(24)),
+        "diagnostic_service_section": _v(seg.get_field(24)),
         "result_status": _v(seg.get_field(25)),
         "parent_result": _v(seg.get_field(26)),
         "quantity_timing": _v(seg.get_first_repetition(27)),
         **_xcn_fields(seg, 28, "result_copies_to"),
         "parent_placer_order_number": _v(seg.get_component(29, 1)),
         "transportation_mode": _v(seg.get_field(30)),
-        **_cwe_fields(seg, 31, "reason_for_study", repeating=True),
+        **_cwe_array_fields(seg, 31, "reason_for_study"),
         "principal_result_interpreter": _v(seg.get_component(32, 1)),
         "assistant_result_interpreter": _v(seg.get_rep_component(33, 1, 1)),
         "technician": _v(seg.get_rep_component(34, 1, 1)),
@@ -655,7 +696,7 @@ def _extract_obr(seg: HL7Segment) -> dict:
         **_cwe_fields(seg, 46, "placer_supplemental_service_info", repeating=True),
         **_cwe_fields(seg, 47, "filler_supplemental_service_info", repeating=True),
         **_cwe_fields(seg, 48, "medically_necessary_dup_proc_reason", repeating=False),
-        "result_handling": _v(seg.get_component(49, 1)),
+        **_cwe_fields(seg, 49, "result_handling", repeating=False),
         **_cwe_fields(seg, 50, "parent_universal_service_id", repeating=False),
         **_ei_fields(seg, 51, "observation_group", repeating=False),
         **_ei_fields(seg, 52, "parent_observation_group", repeating=False),
@@ -674,9 +715,9 @@ def _extract_obx(seg: HL7Segment) -> dict:
         "observation_value": _v(seg.get_first_repetition(5)),
         **_cwe_fields(seg, 6, "units", repeating=False),
         "references_range": _v(seg.get_field(7)),
-        "interpretation_codes": _v(seg.get_first_repetition(8)),
+        **_cwe_array_fields(seg, 8, "interpretation_codes"),
         "probability": _v(seg.get_field(9)),
-        "nature_of_abnormal_test": _v(seg.get_first_repetition(10)),
+        **_s_array_fields(seg, 10, "nature_of_abnormal_test"),
         "observation_result_status": _v(seg.get_field(11)),
         "effective_date_of_ref_range": _parse_dtm(seg.get_field(12)),
         "user_defined_access_checks": _v(seg.get_field(13)),
@@ -768,7 +809,7 @@ def _extract_nk1(seg: HL7Segment) -> dict:
         **_cwe_fields(seg, 18, "ambulatory_status", repeating=True),
         **_cwe_fields(seg, 19, "citizenship", repeating=True),
         **_cwe_fields(seg, 20, "primary_language", repeating=False),
-        "living_arrangement": _v(seg.get_field(21)),
+        **_cwe_fields(seg, 21, "living_arrangement", repeating=False),
         **_cwe_fields(seg, 22, "publicity_code", repeating=False),
         "protection_indicator": _v(seg.get_field(23)),
         "student_indicator": _v(seg.get_field(24)),
@@ -806,14 +847,14 @@ def _extract_evn(seg: HL7Segment) -> dict:
 
 def _extract_pd1(seg: HL7Segment) -> dict:
     return {
-        "living_dependency": _v(seg.get_first_repetition(1)),
-        "living_arrangement": _v(seg.get_field(2)),
+        **_cwe_array_fields(seg, 1, "living_dependency"),
+        **_cwe_fields(seg, 2, "living_arrangement", repeating=False),
         **_xon_fields(seg, 3, "patient_primary_facility"),
         **_xcn_fields(seg, 4, "patient_primary_care_provider"),
-        "student_indicator": _v(seg.get_field(5)),
-        "handicap": _v(seg.get_field(6)),
-        "living_will_code": _v(seg.get_field(7)),
-        "organ_donor_code": _v(seg.get_field(8)),
+        **_cwe_fields(seg, 5, "student_indicator", repeating=False),
+        **_cwe_fields(seg, 6, "handicap", repeating=False),
+        **_cwe_fields(seg, 7, "living_will_code", repeating=False),
+        **_cwe_fields(seg, 8, "organ_donor_code", repeating=False),
         "separate_bill": _v(seg.get_field(9)),
         **_cx_fields(seg, 10, "duplicate_patient"),
         **_cwe_fields(seg, 11, "publicity_code", repeating=False),
@@ -821,12 +862,12 @@ def _extract_pd1(seg: HL7Segment) -> dict:
         "protection_indicator_effective_date": _v(seg.get_field(13)),
         **_xon_fields(seg, 14, "place_of_worship"),
         **_cwe_fields(seg, 15, "advance_directive_code", repeating=True),
-        "immunization_registry_status": _v(seg.get_field(16)),
+        **_cwe_fields(seg, 16, "immunization_registry_status", repeating=False),
         "immunization_registry_status_effective_date": _v(seg.get_field(17)),
         "publicity_code_effective_date": _v(seg.get_field(18)),
-        "military_branch": _v(seg.get_field(19)),
-        "military_rank_grade": _v(seg.get_field(20)),
-        "military_status": _v(seg.get_field(21)),
+        **_cwe_fields(seg, 19, "military_branch", repeating=False),
+        **_cwe_fields(seg, 20, "military_rank_grade", repeating=False),
+        **_cwe_fields(seg, 21, "military_status", repeating=False),
         "advance_directive_last_verified_date": _v(seg.get_field(22)),
         "retirement_date": _v(seg.get_field(23)),
     }
@@ -840,7 +881,7 @@ def _extract_pv2(seg: HL7Segment) -> dict:
         **_cwe_fields(seg, 4, "transfer_reason", repeating=False),
         "patient_valuables": _v(seg.get_first_repetition(5)),
         "patient_valuables_location": _v(seg.get_field(6)),
-        "visit_user_code": _v(seg.get_first_repetition(7)),
+        **_cwe_array_fields(seg, 7, "visit_user_code"),
         "expected_admit_datetime": _parse_dtm(seg.get_field(8)),
         "expected_discharge_datetime": _parse_dtm(seg.get_field(9)),
         "estimated_length_of_inpatient_stay": _i(seg.get_field(10)),
@@ -851,20 +892,20 @@ def _extract_pv2(seg: HL7Segment) -> dict:
         "employment_illness_related_indicator": _v(seg.get_field(15)),
         "purge_status_code": _v(seg.get_field(16)),
         "purge_status_date": _v(seg.get_field(17)),
-        "special_program_code": _v(seg.get_field(18)),
+        **_cwe_fields(seg, 18, "special_program_code", repeating=False),
         "retention_indicator": _v(seg.get_field(19)),
         "expected_number_of_insurance_plans": _i(seg.get_field(20)),
-        "visit_publicity_code": _v(seg.get_field(21)),
+        **_cwe_fields(seg, 21, "visit_publicity_code", repeating=False),
         "visit_protection_indicator": _v(seg.get_field(22)),
         **_xon_fields(seg, 23, "clinic_organization"),
-        "patient_status_code": _v(seg.get_field(24)),
-        "visit_priority_code": _v(seg.get_field(25)),
+        **_cwe_fields(seg, 24, "patient_status_code", repeating=False),
+        **_cwe_fields(seg, 25, "visit_priority_code", repeating=False),
         "previous_treatment_date": _v(seg.get_field(26)),
         "expected_discharge_disposition": _v(seg.get_field(27)),
         "signature_on_file_date": _v(seg.get_field(28)),
         "first_similar_illness_date": _v(seg.get_field(29)),
         **_cwe_fields(seg, 30, "patient_charge_adjustment_code", repeating=False),
-        "recurring_service_code": _v(seg.get_field(31)),
+        **_cwe_fields(seg, 31, "recurring_service_code", repeating=False),
         "billing_media_code": _v(seg.get_field(32)),
         "expected_surgery_datetime": _parse_dtm(seg.get_field(33)),
         "military_partnership_code": _v(seg.get_field(34)),
@@ -876,13 +917,13 @@ def _extract_pv2(seg: HL7Segment) -> dict:
         **_cwe_fields(seg, 40, "admission_level_of_care_code", repeating=False),
         **_cwe_fields(seg, 41, "precaution_code", repeating=True),
         **_cwe_fields(seg, 42, "patient_condition_code", repeating=False),
-        "living_will_code_pv2": _v(seg.get_field(43)),
-        "organ_donor_code_pv2": _v(seg.get_field(44)),
+        **_cwe_fields(seg, 43, "living_will_code_pv2", repeating=False),
+        **_cwe_fields(seg, 44, "organ_donor_code_pv2", repeating=False),
         **_cwe_fields(seg, 45, "advance_directive_code_pv2", repeating=True),
         "patient_status_effective_date": _v(seg.get_field(46)),
         "expected_loa_return_datetime": _parse_dtm(seg.get_field(47)),
         "expected_preadmission_testing_datetime": _parse_dtm(seg.get_field(48)),
-        "notify_clergy_code": _v(seg.get_first_repetition(49)),
+        **_cwe_array_fields(seg, 49, "notify_clergy_code"),
         "advance_directive_last_verified_date_pv2": _v(seg.get_field(50)),
     }
 
@@ -1427,10 +1468,10 @@ class HL7V2LakeflowConnect(LakeflowConnect):
 
     * ``gcp`` (default) — fetches from a Google Cloud Healthcare API HL7v2 store.
     * ``delta`` — reads from a Bronze Delta table containing pre-loaded HL7
-      messages with columns ``data`` (raw text), ``sendTime``, and optionally ``name``.
+      messages with columns ``data`` (raw text), ``createTime``, and optionally ``name``.
 
     Each HL7 segment type is a separate table.  Incremental loading is driven
-    by ``sendTime`` using a sliding time-window.
+    by ``createTime`` using a sliding time-window.
 
     GCP mode connection options:
         project_id, location, dataset_id, hl7v2_store_id, service_account_json
@@ -1456,7 +1497,7 @@ class HL7V2LakeflowConnect(LakeflowConnect):
         super().__init__(options)
         self._source_type = options.get("source_type", "gcp").lower()
         self._init_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        self._oldest_send_time: str | None = None
+        self._oldest_create_time: str | None = None
 
         if self._source_type == "delta":
             self._init_delta(options)
@@ -1631,7 +1672,7 @@ class HL7V2LakeflowConnect(LakeflowConnect):
             pks = ["message_id"]
         return {
             "ingestion_type": "append",
-            "cursor_field": "send_time",
+            "cursor_field": "create_time",
             "primary_keys": pks,
             "description": TABLE_DESCRIPTIONS.get(segment_type, ""),
         }
@@ -1641,7 +1682,7 @@ class HL7V2LakeflowConnect(LakeflowConnect):
     ) -> tuple[Iterator[dict], dict]:
         """Sliding time-window incremental read.
 
-        Fetches all messages whose ``sendTime`` falls in
+        Fetches all messages whose ``createTime`` falls in
         ``(since, since + window_seconds]``, parses them, and returns rows
         for the requested segment type.  The cursor advances to the window
         end regardless of whether data was found, ensuring forward progress.
@@ -1656,7 +1697,7 @@ class HL7V2LakeflowConnect(LakeflowConnect):
         if not since:
             since = table_options.get("start_timestamp")
         if not since:
-            since = self._peek_oldest_send_time()
+            since = self._peek_oldest_create_time()
         if not since:
             print(
                 f"[HL7v2] read_table({table_name}): no start cursor resolved "
@@ -1704,37 +1745,37 @@ class HL7V2LakeflowConnect(LakeflowConnect):
                 "For custom/Z-segments, provide 'segment_type' in table_options."
             )
 
-    def _peek_oldest_send_time(self) -> str | None:
-        """Auto-discover the earliest sendTime by fetching the first message.
+    def _peek_oldest_create_time(self) -> str | None:
+        """Auto-discover the earliest createTime by fetching the first message.
 
         The result is cached for the lifetime of this connector instance since
         the oldest message never changes once discovered.
         """
-        if self._oldest_send_time is not None:
-            return self._oldest_send_time
+        if self._oldest_create_time is not None:
+            return self._oldest_create_time
 
         if self._source_type == "delta":
-            self._oldest_send_time = self._peek_oldest_send_time_delta()
-            return self._oldest_send_time
+            self._oldest_create_time = self._peek_oldest_create_time_delta()
+            return self._oldest_create_time
 
         body = self._api_get({
             "view": "FULL",
             "pageSize": "1",
-            "orderBy": "sendTime asc",
+            "orderBy": "createTime asc",
         })
         messages = body.get("hl7V2Messages", [])
         if messages:
-            ts = messages[0].get("sendTime")
+            ts = messages[0].get("createTime")
             if ts:
                 dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
                 dt -= timedelta(seconds=1)
                 ts = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-            self._oldest_send_time = ts
-        return self._oldest_send_time
+            self._oldest_create_time = ts
+        return self._oldest_create_time
 
     def _fetch_messages_in_window(self, since: str, until: str) -> list[dict]:
-        """Fetch all API messages with sendTime in (since, until]."""
-        filter_str = f'sendTime > "{since}" AND sendTime <= "{until}"'
+        """Fetch all API messages with createTime in (since, until]."""
+        filter_str = f'createTime > "{since}" AND createTime <= "{until}"'
         messages: list[dict] = []
         page_token: str | None = None
 
@@ -1743,7 +1784,7 @@ class HL7V2LakeflowConnect(LakeflowConnect):
                 "view": "FULL",
                 "pageSize": str(_MAX_PAGE_SIZE),
                 "filter": filter_str,
-                "orderBy": "sendTime asc",
+                "orderBy": "createTime asc",
             }
             if page_token:
                 params["pageToken"] = page_token
@@ -1803,17 +1844,17 @@ class HL7V2LakeflowConnect(LakeflowConnect):
         try:
             stmt = (
                 f"SELECT data, "
-                f"date_format(sendTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") AS sendTime, "
+                f"date_format(createTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") AS createTime, "
                 f"name "
                 f"FROM {self._delta_table} "
-                f"ORDER BY sendTime"
+                f"ORDER BY createTime"
             )
             data_array = self._execute_delta_sql(stmt)
             rows = []
             for row in data_array:
                 rows.append({
                     "data": row[0] or "",
-                    "sendTime": row[1] or "",
+                    "createTime": row[1] or "",
                     "name": row[2] if len(row) > 2 else "",
                 })
             self._delta_cache = rows
@@ -1839,13 +1880,13 @@ class HL7V2LakeflowConnect(LakeflowConnect):
             ) from exc
 
     def _fetch_messages_from_delta(self, since: str, until: str) -> list[dict]:
-        """Fetch messages with sendTime in (since, until].
+        """Fetch messages with createTime in (since, until].
 
         In ``preload`` mode, filters the in-memory cache.
         In ``per_window`` mode, issues a live SQL query scoped to the window.
 
         Returns a list of dicts with the same shape as the GCP API response
-        (keys: ``data``, ``sendTime``, ``name``) so that ``_parse_api_messages``
+        (keys: ``data``, ``createTime``, ``name``) so that ``_parse_api_messages``
         works unchanged.
         """
         if self._delta_query_mode == "per_window":
@@ -1860,53 +1901,53 @@ class HL7V2LakeflowConnect(LakeflowConnect):
 
         return [
             row for row in self._delta_cache
-            if since < str(row.get("sendTime", "")) <= until
+            if since < str(row.get("createTime", "")) <= until
         ]
 
     def _fetch_messages_from_delta_live(self, since: str, until: str) -> list[dict]:
         """Issue a live SQL query for messages in (since, until]."""
         stmt = (
             f"SELECT data, "
-            f"date_format(sendTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") AS sendTime, "
+            f"date_format(createTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") AS createTime, "
             f"name "
             f"FROM {self._delta_table} "
-            f"WHERE date_format(sendTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") > '{since}' "
-            f"  AND date_format(sendTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") <= '{until}' "
-            f"ORDER BY sendTime"
+            f"WHERE date_format(createTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") > '{since}' "
+            f"  AND date_format(createTime, \"yyyy-MM-dd'T'HH:mm:ss'Z'\") <= '{until}' "
+            f"ORDER BY createTime"
         )
         data_array = self._execute_delta_sql(stmt)
         return [
             {
                 "data": row[0] or "",
-                "sendTime": row[1] or "",
+                "createTime": row[1] or "",
                 "name": row[2] if len(row) > 2 else "",
             }
             for row in data_array
         ]
 
-    def _peek_oldest_send_time_delta(self) -> str | None:
-        """Return the earliest sendTime from the Delta table.
+    def _peek_oldest_create_time_delta(self) -> str | None:
+        """Return the earliest createTime from the Delta table.
 
         In ``preload`` mode, reads from the in-memory cache.
-        In ``per_window`` mode, issues a ``SELECT MIN(sendTime)`` query.
+        In ``per_window`` mode, issues a ``SELECT MIN(createTime)`` query.
         """
         if self._delta_query_mode == "per_window":
-            return self._peek_oldest_send_time_delta_live()
+            return self._peek_oldest_create_time_delta_live()
 
         if self._delta_cache is None:
             print(
-                f"[HL7v2 Delta] _peek_oldest_send_time_delta: cache is None. "
+                f"[HL7v2 Delta] _peek_oldest_create_time_delta: cache is None. "
                 f"Preload error: {self._delta_preload_error}"
             )
             return None
         if len(self._delta_cache) == 0:
             print(
-                f"[HL7v2 Delta] _peek_oldest_send_time_delta: cache is empty "
+                f"[HL7v2 Delta] _peek_oldest_create_time_delta: cache is empty "
                 f"(0 rows returned from {self._delta_table})"
             )
             return None
 
-        first_ts = str(self._delta_cache[0].get("sendTime", ""))
+        first_ts = str(self._delta_cache[0].get("createTime", ""))
         if not first_ts:
             return None
 
@@ -1914,10 +1955,10 @@ class HL7V2LakeflowConnect(LakeflowConnect):
         dt -= timedelta(seconds=1)
         return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    def _peek_oldest_send_time_delta_live(self) -> str | None:
-        """Discover the earliest sendTime via a live SQL query."""
+    def _peek_oldest_create_time_delta_live(self) -> str | None:
+        """Discover the earliest createTime via a live SQL query."""
         stmt = (
-            f"SELECT date_format(MIN(sendTime), \"yyyy-MM-dd'T'HH:mm:ss'Z'\") "
+            f"SELECT date_format(MIN(createTime), \"yyyy-MM-dd'T'HH:mm:ss'Z'\") "
             f"FROM {self._delta_table}"
         )
         data_array = self._execute_delta_sql(stmt)
@@ -1943,6 +1984,7 @@ class HL7V2LakeflowConnect(LakeflowConnect):
 
         for msg_data in api_messages:
             send_time = msg_data.get("sendTime", "")
+            create_time = msg_data.get("createTime", "") or send_time
             raw_data = msg_data.get("data", "")
             if not raw_data:
                 continue
@@ -1957,7 +1999,7 @@ class HL7V2LakeflowConnect(LakeflowConnect):
                 if msg is None:
                     continue
                 msh = msg.get_segment("MSH")
-                meta = _metadata(msh, source_name, send_time)
+                meta = _metadata(msh, source_name, send_time, create_time)
 
                 if segment_type == "MSH":
                     if msh is not None:

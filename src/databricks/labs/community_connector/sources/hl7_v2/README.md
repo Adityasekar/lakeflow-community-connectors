@@ -52,7 +52,7 @@ Your Bronze Delta table must have these columns:
 | Column | Type | Required | Description |
 |---|---|---|---|
 | `data` | STRING | Yes | Raw HL7 v2 message text (pipe-delimited, e.g., `MSH\|^~\\&\|...`) |
-| `sendTime` | STRING or TIMESTAMP | Yes | Timestamp used as the incremental cursor (e.g., `2024-01-15T10:30:00Z`) |
+| `createTime` | STRING or TIMESTAMP | Yes | Timestamp used as the incremental cursor (e.g., `2024-01-15T10:30:00Z`) |
 | `name` | STRING | No | Source identifier for traceability (stored in `source_file` column) |
 
 **Example: Creating the Bronze table from Volume files**
@@ -61,7 +61,7 @@ Your Bronze Delta table must have these columns:
 CREATE TABLE my_catalog.my_schema.hl7_raw AS
 SELECT
   value                            AS data,
-  _metadata.file_modification_time AS sendTime,
+  _metadata.file_modification_time AS createTime,
   _metadata.file_name              AS name
 FROM read_files(
   '/Volumes/my_catalog/my_schema/hl7_volume/',
@@ -161,12 +161,13 @@ Every table includes these columns for traceability and cross-table joins:
 | `message_timestamp` | Message date/time from MSH-7 (e.g., `20240115120000`) |
 | `hl7_version` | HL7 version from MSH-12 (e.g., `2.5.1`) |
 | `source_file` | Source identifier — GCP API resource name or Delta `name` column value |
-| `send_time` | RFC 3339 timestamp used as the incremental cursor |
+| `send_time` | Original HL7 message send time from the API in RFC 3339 format |
+| `create_time` | GCP `createTime` (when the message was ingested); used as the incremental cursor |
 | `raw_segment` | Original unparsed HL7 segment text |
 
 ### Incremental Ingestion
 
-All tables use **append-only** ingestion. HL7 v2 is a messaging protocol — every message is an immutable event. The connector tracks progress via `sendTime` using a sliding time window, advancing the cursor after each batch. Messages already processed are never re-fetched.
+All tables use **append-only** ingestion. HL7 v2 is a messaging protocol — every message is an immutable event. The connector tracks progress via `createTime` using a sliding time window, advancing the cursor after each batch. Messages already processed are never re-fetched.
 
 ## Data Type Mapping
 
@@ -207,7 +208,7 @@ All HL7 v2 fields are stored as `STRING`. The connector extracts **all** compone
 
 **Delta mode:**
 - **Table not found** — Verify `delta_table_name` is fully-qualified (e.g., `catalog.schema.table`) with `SELECT` permissions.
-- **No data** — Confirm `sendTime` values exist and `data` starts with `MSH|`.
+- **No data** — Confirm `createTime` values exist and `data` starts with `MSH|`.
 - **Parse errors** — Ensure `data` is raw pipe-delimited text, not base64. Decode if needed: `UPDATE t SET data = cast(unbase64(data) as STRING)`.
 - **Out of memory** — Set `delta_query_mode` to `per_window` in the connection for large tables.
 

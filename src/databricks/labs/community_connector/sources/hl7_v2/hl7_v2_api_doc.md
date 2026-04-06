@@ -975,35 +975,35 @@ Primary keys are **static** — not discoverable via API.
 All tables use **`append`** ingestion:
 
 - HL7 messages are fetched from the Google Cloud Healthcare API HL7v2 store.
-- The connector tracks new messages by **`sendTime`** (RFC3339 timestamp from the API).
+- The connector tracks new messages by **`createTime`** (RFC3339 timestamp from the API — when the message was ingested into the HL7v2 store).
 - Messages already processed are never re-fetched.
 - No change feeds, upserts, or deletes — new messages always produce new rows.
 
 | Table | Ingestion Type | Cursor | Notes |
 |---|---|---|---|
-| `msh` | `append` | `sendTime` | One row per message |
-| `evn` | `append` | `sendTime` | One row per message with EVN |
-| `pid` | `append` | `sendTime` | One row per message with PID |
-| `pd1` | `append` | `sendTime` | One row per message with PD1 |
-| `pv1` | `append` | `sendTime` | One row per message with PV1 |
-| `pv2` | `append` | `sendTime` | One row per message with PV2 |
-| `nk1` | `append` | `sendTime` | Multiple rows per message possible |
-| `mrg` | `append` | `sendTime` | One row per merge message |
-| `al1` | `append` | `sendTime` | Multiple rows per message possible |
-| `iam` | `append` | `sendTime` | Multiple rows per message possible |
-| `dg1` | `append` | `sendTime` | Multiple rows per message possible |
-| `pr1` | `append` | `sendTime` | Multiple rows per message possible |
-| `orc` | `append` | `sendTime` | Multiple rows per message possible |
-| `obr` | `append` | `sendTime` | Multiple rows per message possible |
-| `obx` | `append` | `sendTime` | 8–50 rows per lab message typical |
-| `nte` | `append` | `sendTime` | Multiple rows per message possible |
-| `spm` | `append` | `sendTime` | Multiple rows per message possible |
-| `in1` | `append` | `sendTime` | Multiple rows per message possible |
-| `gt1` | `append` | `sendTime` | Multiple rows per message possible |
-| `ft1` | `append` | `sendTime` | Multiple rows per message possible |
-| `rxa` | `append` | `sendTime` | Multiple rows per message possible |
-| `sch` | `append` | `sendTime` | One row per scheduling message |
-| `txa` | `append` | `sendTime` | One row per document message |
+| `msh` | `append` | `createTime` | One row per message |
+| `evn` | `append` | `createTime` | One row per message with EVN |
+| `pid` | `append` | `createTime` | One row per message with PID |
+| `pd1` | `append` | `createTime` | One row per message with PD1 |
+| `pv1` | `append` | `createTime` | One row per message with PV1 |
+| `pv2` | `append` | `createTime` | One row per message with PV2 |
+| `nk1` | `append` | `createTime` | Multiple rows per message possible |
+| `mrg` | `append` | `createTime` | One row per merge message |
+| `al1` | `append` | `createTime` | Multiple rows per message possible |
+| `iam` | `append` | `createTime` | Multiple rows per message possible |
+| `dg1` | `append` | `createTime` | Multiple rows per message possible |
+| `pr1` | `append` | `createTime` | Multiple rows per message possible |
+| `orc` | `append` | `createTime` | Multiple rows per message possible |
+| `obr` | `append` | `createTime` | Multiple rows per message possible |
+| `obx` | `append` | `createTime` | 8–50 rows per lab message typical |
+| `nte` | `append` | `createTime` | Multiple rows per message possible |
+| `spm` | `append` | `createTime` | Multiple rows per message possible |
+| `in1` | `append` | `createTime` | Multiple rows per message possible |
+| `gt1` | `append` | `createTime` | Multiple rows per message possible |
+| `ft1` | `append` | `createTime` | Multiple rows per message possible |
+| `rxa` | `append` | `createTime` | Multiple rows per message possible |
+| `sch` | `append` | `createTime` | One row per scheduling message |
+| `txa` | `append` | `createTime` | One row per document message |
 
 ---
 
@@ -1027,12 +1027,12 @@ https://healthcare.googleapis.com/v1/projects/{project_id}/locations/{location}/
 | `view` | `FULL` | Required to get raw `data` field. BASIC returns only `name`. |
 | `pageSize` | `1000` | Max allowed value |
 | `pageToken` | `<token from prior response>` | Pagination; omit on first request |
-| `filter` | `sendTime > "2024-01-01T00:00:00Z"` | Incremental filtering by sendTime |
-| `orderBy` | `sendTime asc` | Ensures cursor advances monotonically |
+| `filter` | `createTime > "2024-01-01T00:00:00Z"` | Incremental filtering by createTime |
+| `orderBy` | `createTime asc` | Ensures cursor advances monotonically |
 
 **Example Request**:
 ```
-GET https://healthcare.googleapis.com/v1/projects/my-project/locations/us-central1/datasets/my-dataset/hl7V2Stores/my-store/messages?view=FULL&pageSize=1000&filter=sendTime>"2024-01-01T00:00:00Z"&orderBy=sendTime+asc
+GET https://healthcare.googleapis.com/v1/projects/my-project/locations/us-central1/datasets/my-dataset/hl7V2Stores/my-store/messages?view=FULL&pageSize=1000&filter=createTime>"2024-01-01T00:00:00Z"&orderBy=createTime+asc
 Authorization: Bearer <token>
 ```
 
@@ -1103,7 +1103,7 @@ GT1|1||DOE^JOHN||123 MAIN ST^^SPRINGFIELD^IL^62701
 
 ### Message Parsing Strategy
 
-1. **Fetch messages** from the API with `view=FULL` and incremental filter on `sendTime`
+1. **Fetch messages** from the API with `view=FULL` and incremental filter on `createTime`
 2. **Base64-decode** the `data` field to get raw HL7 text
 3. **Parse**: split on segment terminator (`\r` or `\r\n` or `\n`), identify segment type by first 3 characters
 4. **Extract MSH fields** first (MSH-7 timestamp, MSH-10 message ID, MSH-12 version) — these become common columns for all segment tables
@@ -1112,7 +1112,7 @@ GT1|1||DOE^JOHN||123 MAIN ST^^SPRINGFIELD^IL^62701
 
 ### Pagination / Batching
 
-- **Cursor**: `sendTime` (RFC3339 string from the API). After each batch, advance cursor to the latest `sendTime` seen.
+- **Cursor**: `createTime` (RFC3339 string from the API). After each batch, advance cursor to the latest `createTime` seen.
 - **Batch size**: Configurable via `max_records_per_batch` table option (default 10,000 records). The connector stops fetching pages once this limit is reached.
 - **Page size**: Max 1000 messages per API page. Use `pageToken` from `nextPageToken` to get the next page.
 - **Rate limits**: TBD — Google Cloud Healthcare API quota limits vary by project; consult GCP quota console.

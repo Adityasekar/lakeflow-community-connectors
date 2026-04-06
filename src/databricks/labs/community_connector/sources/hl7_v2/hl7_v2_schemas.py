@@ -8,12 +8,13 @@ receives them as ``null``.
 All wire-format values are strings; only ``set_id`` / sequence-number
 fields are typed as ``LongType`` because they are guaranteed-numeric.
 
-Every table includes six common metadata columns:
+Every table includes seven common metadata columns:
     message_id        — MSH-10 (join key across all segment tables)
-    message_timestamp — MSH-7  (raw HL7 DTM string, cursor field)
+    message_timestamp — MSH-7  (raw HL7 DTM string)
     hl7_version       — MSH-12 (e.g. "2.5.1")
     source_file       — GCP Healthcare API resource name of the source message
-    send_time         — RFC3339 sendTime from the API (incremental cursor)
+    send_time         — RFC3339 sendTime from the API (original HL7 message send time)
+    create_time       — RFC3339 createTime from the GCP API (incremental cursor)
     raw_segment       — raw pipe-delimited segment text for lossless recovery
 """
 
@@ -99,9 +100,32 @@ _XPN_STRUCT = StructType([
 ])
 
 
+_CWE_STRUCT = StructType([
+    StructField("code", StringType(), nullable=True),
+    StructField("text", StringType(), nullable=True),
+    StructField("coding_system", StringType(), nullable=True),
+    StructField("alt_code", StringType(), nullable=True),
+    StructField("alt_text", StringType(), nullable=True),
+    StructField("alt_coding_system", StringType(), nullable=True),
+    StructField("coding_system_version", StringType(), nullable=True),
+    StructField("alt_coding_system_version", StringType(), nullable=True),
+    StructField("original_text", StringType(), nullable=True),
+])
+
+
 def _xpn_array_schema(column_name: str, label: str, field_ref: str) -> list[StructField]:
     """XPN (Extended Person Name) — repeating field as ArrayType(StructType([...]))."""
     return [StructField(column_name, ArrayType(_XPN_STRUCT, containsNull=True), nullable=True)]
+
+
+def _cwe_array_schema(column_name: str, label: str, field_ref: str) -> list[StructField]:
+    """CWE (Coded With Exceptions) — repeating field as ArrayType(StructType([...]))."""
+    return [StructField(column_name, ArrayType(_CWE_STRUCT, containsNull=True), nullable=True)]
+
+
+def _s_array(name: str, comment: str = "") -> StructField:
+    """ArrayType(StringType) for repeating simple (ID/IS) fields."""
+    return StructField(name, ArrayType(StringType(), containsNull=True), nullable=True)
 
 
 def _xcn_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
@@ -286,7 +310,8 @@ _METADATA_FIELDS: list[StructField] = [
     _s("message_timestamp", "Message creation date/time (MSH-7) in HL7 DTM format, e.g. 20240101120000"),
     _s("hl7_version",       "HL7 version string (MSH-12), e.g. 2.5.1"),
     _s("source_file",       "API resource name of the source HL7 message for traceability"),
-    _s("send_time",         "Message send time from the GCP Healthcare API in RFC3339 format; used as incremental cursor"),
+    _s("send_time",         "Original HL7 message send time from the GCP Healthcare API in RFC3339 format"),
+    _s("create_time",       "GCP Healthcare API createTime (when the message was ingested into the HL7v2 store); used as incremental cursor"),
     _s("raw_segment",       "Raw pipe-delimited text of this HL7 segment for lossless recovery and debugging"),
 ]
 
@@ -444,8 +469,10 @@ MSH_SCHEMA = StructType(
         _s("accept_acknowledgment_type",       "Conditions requiring an accept (transport-level) acknowledgment (MSH-15): AL, NE, SU, ER"),
         _s("application_acknowledgment_type",  "Conditions requiring an application-level acknowledgment (MSH-16): AL, NE, SU, ER"),
         _s("country_code",                     "ISO 3166 three-letter country code for the message (MSH-17)"),
-        _s("character_set",                    "Character encoding used in the message (MSH-18), e.g. ASCII, UTF-8, 8859/1"),
-        _s("principal_language",               "Primary language of the message content (MSH-19.1)"),
+        _s_array("character_set",              "Character encoding used in the message (MSH-18, ID repeatable), e.g. ASCII, UTF-8, 8859/1"),
+    ]
+    + _cwe_schema("principal_language", "Principal language of the message (CWE)", "MSH-19")
+    + [
         _s("alt_character_set_handling",       "Alternate character set handling scheme (MSH-20)"),
         *_ei_array_schema("message_profile_identifiers", "Message profile identifiers", "MSH-21"),
     ]
@@ -454,10 +481,8 @@ MSH_SCHEMA = StructType(
     + _hd_schema("sending_network_address", "Sending network address", "MSH-24")
     + _hd_schema("receiving_network_address", "Receiving network address", "MSH-25")
     + _cwe_schema("security_classification_tag", "Security classification", "MSH-26")
-    + _cwe_schema("security_handling_instructions", "Security handling instructions (first repetition)", "MSH-27")
-    + [
-        _s("special_access_restriction",                           "Special access restriction instructions (MSH-28, ST, v2.7.1+)"),
-    ]
+    + _cwe_array_schema("security_handling_instructions", "Security handling instructions (CWE, repeatable)", "MSH-27")
+    + _cwe_array_schema("special_access_restriction", "Special access restriction instructions (CWE, repeatable, v2.7.1+)", "MSH-28")
 )
 
 # ---------------------------------------------------------------------------
@@ -518,7 +543,9 @@ PV1_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
         _i("set_id",                       "Sequence number when multiple PV1 segments appear (PV1-1)"),
-        _s("patient_class",                "Patient classification (PV1-2): I=Inpatient, O=Outpatient, E=Emergency, R=Recurring, B=Obstetrics"),
+    ]
+    + _cwe_schema("patient_class", "Patient class (CWE)", "PV1-2")
+    + [
         _s("assigned_patient_location",    "Full assigned bed location composite (PV1-3), raw; use location_* fields"),
         _s("location_point_of_care",       "Unit or nursing station, e.g. ICU, MED (PV1-3.1)"),
         _s("location_room",                "Room number within the unit (PV1-3.2)"),
@@ -526,8 +553,8 @@ PV1_SCHEMA = StructType(
         _s("location_facility",            "Facility where the patient is located (PV1-3.4)"),
         _s("location_status",              "Bed status, e.g. C=Closed, H=Housekeeping, O=Occupied (PV1-3.5)"),
         _s("location_type",                "Person location type, e.g. N=Nursing Unit, C=Clinic (PV1-3.9)"),
-        _s("admission_type",               "Admission type (PV1-4): A=Accident, E=Emergency, L=Labor, R=Routine, N=Newborn"),
     ]
+    + _cwe_schema("admission_type", "Admission type (CWE)", "PV1-4")
     + _cx_schema("preadmit_number", "Pre-admission number", "PV1-5")
     + [
         _s("prior_patient_location",       "Prior bed location before transfer (PV1-6), raw composite"),
@@ -535,25 +562,25 @@ PV1_SCHEMA = StructType(
     + _xcn_schema("attending_doctor", "Attending physician", "PV1-7")
     + _xcn_schema("referring_doctor", "Referring physician", "PV1-8")
     + _xcn_schema("consulting_doctor", "Consulting physician", "PV1-9")
+    + _cwe_schema("hospital_service", "Hospital service (CWE)", "PV1-10")
     + [
-        _s("hospital_service",             "Type of service the patient is under, e.g. MED, SUR, ORT (PV1-10)"),
         _s("temporary_location",           "Temporary bed/location during a transfer (PV1-11)"),
         _s("preadmit_test_indicator",      "Whether pre-admission testing was performed: Y or N (PV1-12)"),
         _s("readmission_indicator",        "Whether this is a readmission: R=Readmission (PV1-13)"),
-        _s("admit_source",                 "Source of the admission, e.g. 1=Physician referral, 7=Emergency room (PV1-14)"),
-        _s("ambulatory_status",            "Ambulatory status code, e.g. A1=No functional limitations (PV1-15)"),
-        _s("vip_indicator",                "VIP flag for special patient handling (PV1-16)"),
     ]
+    + _cwe_schema("admit_source", "Admit source (CWE)", "PV1-14")
+    + _cwe_array_schema("ambulatory_status", "Ambulatory status (CWE, repeatable)", "PV1-15")
+    + _cwe_schema("vip_indicator", "VIP indicator (CWE)", "PV1-16")
     + _xcn_schema("admitting_doctor", "Admitting physician", "PV1-17")
-    + [
-        _s("patient_type",                 "Site-defined patient type or classification (PV1-18)"),
-    ]
+    + _cwe_schema("patient_type", "Patient type (CWE)", "PV1-18")
     + _cx_schema("visit_number", "Visit/encounter number", "PV1-19")
     + [
         _s("financial_class",              "Financial class or payer category (PV1-20.1)"),
-        _s("charge_price_indicator",       "Price indicator for charging purposes (PV1-21)"),
-        _s("courtesy_code",                "Courtesy code for billing discounts (PV1-22)"),
-        _s("credit_rating",                "Patient credit rating (PV1-23)"),
+    ]
+    + _cwe_schema("charge_price_indicator", "Charge price indicator (CWE)", "PV1-21")
+    + _cwe_schema("courtesy_code", "Courtesy code (CWE)", "PV1-22")
+    + _cwe_schema("credit_rating", "Credit rating (CWE)", "PV1-23")
+    + [
         _s("contract_code",                "Contract type code(s) (PV1-24)"),
         _s("contract_effective_date",      "Effective date of the contract (PV1-25)"),
         _s("contract_amount",              "Amount owed under the contract (PV1-26)"),
@@ -566,14 +593,18 @@ PV1_SCHEMA = StructType(
         _s("bad_debt_recovery_amount",     "Amount recovered from bad debt (PV1-33)"),
         _s("delete_account_indicator",     "Whether the account has been marked for deletion (PV1-34)"),
         _s("delete_account_date",          "Date the account was deleted (PV1-35)"),
-        _s("discharge_disposition",        "Discharge disposition code (PV1-36): 01=Home, 02=SNF, 07=AMA, 20=Expired"),
+    ]
+    + _cwe_schema("discharge_disposition", "Discharge disposition (CWE)", "PV1-36")
+    + [
         _s("discharged_to_location",       "Location to which the patient was discharged (PV1-37.1)"),
     ]
     + _cwe_schema("diet_type", "Diet type", "PV1-38")
+    + _cwe_schema("servicing_facility", "Servicing facility (CWE)", "PV1-39")
     + [
-        _s("servicing_facility",           "Facility providing the service (PV1-39)"),
         _s("bed_status",                   "Current bed status (PV1-40, deprecated in v2.6)"),
-        _s("account_status",               "Account status code (PV1-41)"),
+    ]
+    + _cwe_schema("account_status", "Account status (CWE)", "PV1-41")
+    + [
         _s("pending_location",             "Bed reserved for a pending admission or transfer (PV1-42)"),
         _s("prior_temporary_location",     "Prior temporary location before the current transfer (PV1-43)"),
         _ts("admit_datetime",              "Date/time of admission parsed to timestamp (PV1-44)"),
@@ -584,9 +615,7 @@ PV1_SCHEMA = StructType(
         _s("total_payments",               "Total payments received for the visit (PV1-49)"),
     ]
     + _cx_schema("alternate_visit_id", "Alternate visit ID", "PV1-50")
-    + [
-        _s("visit_indicator",              "Visit indicator: V=Visit level, A=Account level (PV1-51)"),
-    ]
+    + _cwe_schema("visit_indicator", "Visit indicator (CWE)", "PV1-51")
     + _xcn_schema("other_healthcare_provider", "Other healthcare provider", "PV1-52")
     + [
         _s("service_episode_description",   "Free-text description of the service episode (PV1-53, v2.8+)"),
@@ -633,7 +662,7 @@ OBR_SCHEMA = StructType(
         _s("filler_field_2",                      "Filler-defined field 2 for local use (OBR-21)"),
         _ts("results_rpt_status_chng_datetime",   "Date/time the result status last changed, parsed to timestamp (OBR-22)"),
         _s("charge_to_practice",                  "Charge information for billing purposes (OBR-23)"),
-        _s("diagnostic_service_section_id",       "Lab section performing the test, e.g. HM=Hematology, CH=Chemistry (OBR-24)"),
+        _s("diagnostic_service_section",          "Diagnostic service section ID code (OBR-24)"),
         _s("result_status",                       "Overall result status (OBR-25): F=Final, P=Preliminary, C=Corrected, X=Canceled"),
         _s("parent_result",                       "Reference to the parent result for reflex tests (OBR-26)"),
         _s("quantity_timing",                     "Quantity and timing of the order (OBR-27, deprecated in v2.7)"),
@@ -641,9 +670,9 @@ OBR_SCHEMA = StructType(
     + _xcn_schema("result_copies_to", "Result copy-to provider", "OBR-28")
     + [
         _s("parent_placer_order_number",          "Placer order number of the parent order for reflex tests (OBR-29.1)"),
-        _s("transportation_mode",                 "How the specimen is to be transported to the lab (OBR-30)"),
+        _s("transportation_mode",                  "Specimen transportation mode code (OBR-30)"),
     ]
-    + _cwe_schema("reason_for_study", "Reason for study (CWE, first repetition)", "OBR-31")
+    + _cwe_array_schema("reason_for_study", "Reason for study (CWE, repeatable)", "OBR-31")
     + [
         _s("principal_result_interpreter",        "Provider who interpreted the result (OBR-32.1)"),
         _s("assistant_result_interpreter",        "Assistant provider who helped interpret the result (OBR-33.1)"),
@@ -656,8 +685,8 @@ OBR_SCHEMA = StructType(
     + _cwe_schema("collectors_comment", "Collector comment (CWE, first repetition)", "OBR-39")
     + _cwe_schema("transport_arrangement_responsibility", "Transport arrangement responsibility (CWE)", "OBR-40")
     + [
-        _s("transport_arranged",                  "Whether transport has been arranged: A=Arranged, N=Not arranged (OBR-41)"),
-        _s("escort_required",                     "Whether an escort is required for specimen transport: R=Required (OBR-42)"),
+        _s("transport_arranged",                   "Transport arranged indicator code (OBR-41)"),
+        _s("escort_required",                      "Escort required indicator code (OBR-42)"),
     ]
     + _cwe_schema("planned_patient_transport_comment", "Planned patient transport comment (CWE, first repetition)", "OBR-43")
     + _cwe_schema("procedure_code", "Procedure code (CWE)", "OBR-44")
@@ -665,9 +694,7 @@ OBR_SCHEMA = StructType(
     + _cwe_schema("placer_supplemental_service_info", "Placer supplemental service info (CWE, first repetition)", "OBR-46")
     + _cwe_schema("filler_supplemental_service_info", "Filler supplemental service info (CWE, first repetition)", "OBR-47")
     + _cwe_schema("medically_necessary_dup_proc_reason", "Medically necessary duplicate procedure reason (CWE)", "OBR-48")
-    + [
-        _s("result_handling",                     "How the result should be handled, e.g. F=Film-with-patient (OBR-49.1, v2.6+)"),
-    ]
+    + _cwe_schema("result_handling", "Result handling (CWE)", "OBR-49")
     + _cwe_schema("parent_universal_service_id", "Parent universal service ID (CWE)", "OBR-50")
     + _ei_schema("observation_group", "Observation group (EI)", "OBR-51")
     + _ei_schema("parent_observation_group", "Parent observation group (EI)", "OBR-52")
@@ -696,9 +723,11 @@ OBX_SCHEMA = StructType(
     + _cwe_schema("units", "Units of measure (CWE)", "OBX-6")
     + [
         _s("references_range",                "Normal or reference range for the result, e.g. 136-145 (OBX-7)"),
-        _s("interpretation_codes",            "Abnormality flag (OBX-8): N=Normal, H=High, L=Low, A=Abnormal, C=Critical"),
+    ]
+    + _cwe_array_schema("interpretation_codes", "Interpretation codes (CWE, repeatable)", "OBX-8")
+    + [
         _s("probability",                     "Probability of the observation being correct, 0-1 scale (OBX-9)"),
-        _s("nature_of_abnormal_test",         "What the reference range is based on: A=Age, S=Sex, R=Race (OBX-10)"),
+        _s_array("nature_of_abnormal_test",   "What the reference range is based on: A=Age, S=Sex, R=Race (OBX-10, ID repeatable)"),
         _s("observation_result_status",       "Result status (OBX-11): F=Final, P=Preliminary, C=Corrected, X=Deleted, R=Not yet verified"),
         _ts("effective_date_of_ref_range",    "Date the reference range became effective, parsed to timestamp (OBX-12)"),
         _s("user_defined_access_checks",      "Site-defined access control value (OBX-13)"),
@@ -832,9 +861,7 @@ NK1_SCHEMA = StructType(
     + _cwe_schema("ambulatory_status", "Ambulatory status", "NK1-18")
     + _cwe_schema("citizenship", "Citizenship", "NK1-19")
     + _cwe_schema("primary_language", "Primary language", "NK1-20")
-    + [
-        _s("living_arrangement",         "Living arrangement code (NK1-21): A=Alone, F=Family, I=Institution, R=Relative"),
-    ]
+    + _cwe_schema("living_arrangement", "Living arrangement (CWE)", "NK1-21")
     + _cwe_schema("publicity_code", "Publicity / consent to contact", "NK1-22")
     + [
         _s("protection_indicator",       "Whether to restrict sharing of this contact's information: Y or N (NK1-23)"),
@@ -874,7 +901,7 @@ NK1_SCHEMA = StructType(
 EVN_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _s("event_type_code",          "Event type code (EVN-1, deprecated in v2.5); superseded by MSH-9 trigger event"),
+        _s("event_type_code",          "Event type code, withdrawn as of v2.7 (EVN-1)"),
         _ts("recorded_datetime",       "Date/time the event was recorded in the sending system, parsed to timestamp (EVN-2)"),
         _ts("date_time_planned_event", "Date/time the event was planned to occur, parsed to timestamp (EVN-3)"),
     ]
@@ -892,17 +919,15 @@ EVN_SCHEMA = StructType(
 
 PD1_SCHEMA = StructType(
     _METADATA_FIELDS
-    + [
-        _s("living_dependency",                        "Living dependency code (PD1-1): S=Spouse, M=Medical Supervision, C=Small Children"),
-        _s("living_arrangement",                       "Living arrangement code (PD1-2): A=Alone, F=Family, I=Institution, R=Relative, U=Unknown"),
-    ]
+    + _cwe_array_schema("living_dependency", "Living dependency (CWE, repeatable)", "PD1-1")
+    + _cwe_schema("living_arrangement", "Living arrangement (CWE)", "PD1-2")
     + _xon_schema("patient_primary_facility", "Primary care facility", "PD1-3")
     + _xcn_schema("patient_primary_care_provider", "Primary care provider", "PD1-4")
+    + _cwe_schema("student_indicator", "Student indicator (CWE)", "PD1-5")
+    + _cwe_schema("handicap", "Handicap (CWE)", "PD1-6")
+    + _cwe_schema("living_will_code", "Living will code (CWE)", "PD1-7")
+    + _cwe_schema("organ_donor_code", "Organ donor code (CWE)", "PD1-8")
     + [
-        _s("student_indicator",                        "Student status (PD1-5): F=Full-time, P=Part-time, N=Not a student"),
-        _s("handicap",                                 "Handicap code (PD1-6)"),
-        _s("living_will_code",                         "Living will status (PD1-7): Y=Yes, F=Filed with patient, N=No"),
-        _s("organ_donor_code",                         "Organ donor status (PD1-8): Y=Yes, F=Filed with patient, N=No"),
         _s("separate_bill",                            "Separate billing flag Y/N (PD1-9)"),
     ]
     + _cx_schema("duplicate_patient", "Duplicate patient", "PD1-10")
@@ -913,13 +938,15 @@ PD1_SCHEMA = StructType(
     ]
     + _xon_schema("place_of_worship", "Place of worship", "PD1-14")
     + _cwe_schema("advance_directive_code", "Advance directive", "PD1-15")
+    + _cwe_schema("immunization_registry_status", "Immunization registry status (CWE)", "PD1-16")
     + [
-        _s("immunization_registry_status",             "Immunization registry status (PD1-16): A=Active, I=Inactive, P=Protected"),
         _s("immunization_registry_status_effective_date", "Immunization registry status effective date (PD1-17)"),
         _s("publicity_code_effective_date",            "Publicity code effective date (PD1-18)"),
-        _s("military_branch",                          "Military branch (PD1-19): USA=Army, USN=Navy, USAF=Air Force, USMC=Marines"),
-        _s("military_rank_grade",                      "Military rank or grade (PD1-20)"),
-        _s("military_status",                          "Military status (PD1-21): ACT=Active duty, RET=Retired, DEC=Deceased"),
+    ]
+    + _cwe_schema("military_branch", "Military branch (CWE)", "PD1-19")
+    + _cwe_schema("military_rank_grade", "Military rank/grade (CWE)", "PD1-20")
+    + _cwe_schema("military_status", "Military status (CWE)", "PD1-21")
+    + [
         _s("advance_directive_last_verified_date",     "Date advance directive was last verified (PD1-22, v2.8+)"),
         _s("retirement_date",                          "Date the patient retired (PD1-23, v2.9+)"),
     ]
@@ -940,7 +967,9 @@ PV2_SCHEMA = StructType(
     + [
         _s("patient_valuables",                        "Patient's valuable items description (PV2-5)"),
         _s("patient_valuables_location",               "Location of patient's valuables (PV2-6)"),
-        _s("visit_user_code",                          "Visit user code (PV2-7)"),
+    ]
+    + _cwe_array_schema("visit_user_code", "Visit user code (CWE, repeatable)", "PV2-7")
+    + [
         _ts("expected_admit_datetime",                 "Expected admission date/time (PV2-8)"),
         _ts("expected_discharge_datetime",             "Expected discharge date/time (PV2-9)"),
         _i("estimated_length_of_inpatient_stay",       "Estimated length of inpatient stay in days (PV2-10)"),
@@ -953,24 +982,28 @@ PV2_SCHEMA = StructType(
         _s("employment_illness_related_indicator",     "Employment illness related Y/N (PV2-15)"),
         _s("purge_status_code",                        "Purge status code (PV2-16)"),
         _s("purge_status_date",                        "Purge status date (PV2-17)"),
-        _s("special_program_code",                     "Special program code (PV2-18)"),
+    ]
+    + _cwe_schema("special_program_code", "Special program code (CWE)", "PV2-18")
+    + [
         _s("retention_indicator",                      "Retention indicator Y/N (PV2-19)"),
         _i("expected_number_of_insurance_plans",       "Expected number of insurance plans (PV2-20)"),
-        _s("visit_publicity_code",                     "Visit publicity code (PV2-21)"),
-        _s("visit_protection_indicator",               "Visit protection indicator Y/N (PV2-22)"),
+    ]
+    + _cwe_schema("visit_publicity_code", "Visit publicity code (CWE)", "PV2-21")
+    + [
+        _s("visit_protection_indicator",               "Visit protection indicator ID code (PV2-22)"),
     ]
     + _xon_schema("clinic_organization", "Clinic organization", "PV2-23")
+    + _cwe_schema("patient_status_code", "Patient status code (CWE)", "PV2-24")
+    + _cwe_schema("visit_priority_code", "Visit priority code (CWE)", "PV2-25")
     + [
-        _s("patient_status_code",                      "Patient status code (PV2-24)"),
-        _s("visit_priority_code",                      "Visit priority code (PV2-25)"),
         _s("previous_treatment_date",                  "Previous treatment date (PV2-26)"),
         _s("expected_discharge_disposition",            "Expected discharge disposition (PV2-27)"),
         _s("signature_on_file_date",                   "Signature on file date (PV2-28)"),
         _s("first_similar_illness_date",               "Date of first similar illness (PV2-29)"),
     ]
     + _cwe_schema("patient_charge_adjustment_code", "Patient charge adjustment code", "PV2-30")
+    + _cwe_schema("recurring_service_code", "Recurring service code (CWE)", "PV2-31")
     + [
-        _s("recurring_service_code",                   "Recurring service code (PV2-31)"),
         _s("billing_media_code",                       "Billing media code Y/N (PV2-32)"),
         _ts("expected_surgery_datetime",               "Expected surgery date/time (PV2-33)"),
         _s("military_partnership_code",                "Military partnership code Y/N (PV2-34)"),
@@ -983,16 +1016,16 @@ PV2_SCHEMA = StructType(
     + _cwe_schema("admission_level_of_care_code", "Admission level of care code", "PV2-40")
     + _cwe_schema("precaution_code", "Precaution code", "PV2-41")
     + _cwe_schema("patient_condition_code", "Patient condition code", "PV2-42")
-    + [
-        _s("living_will_code_pv2",                     "Living will code (PV2-43); same values as PD1-7"),
-        _s("organ_donor_code_pv2",                     "Organ donor code (PV2-44); same values as PD1-8"),
-    ]
+    + _cwe_schema("living_will_code_pv2", "Living will code (CWE)", "PV2-43")
+    + _cwe_schema("organ_donor_code_pv2", "Organ donor code (CWE)", "PV2-44")
     + _cwe_schema("advance_directive_code_pv2", "Advance directive", "PV2-45")
     + [
         _s("patient_status_effective_date",            "Patient status effective date (PV2-46)"),
         _ts("expected_loa_return_datetime",            "Expected leave of absence return date/time (PV2-47)"),
         _ts("expected_preadmission_testing_datetime",  "Expected pre-admission testing date/time (PV2-48)"),
-        _s("notify_clergy_code",                       "Notify clergy code (PV2-49)"),
+    ]
+    + _cwe_array_schema("notify_clergy_code", "Notify clergy code (CWE, repeatable)", "PV2-49")
+    + [
         _s("advance_directive_last_verified_date_pv2", "Date advance directive was last verified (PV2-50, v2.9+)"),
     ]
 )
