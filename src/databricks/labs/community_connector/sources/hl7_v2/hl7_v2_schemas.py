@@ -1073,8 +1073,8 @@ IAM_SCHEMA = StructType(
         _s("onset_date",                          "Allergy onset date (IAM-11)"),
         _s("onset_date_text",                     "Free-text onset date description (IAM-12)"),
         _ts("reported_datetime",                  "When the allergy was reported (IAM-13)"),
-        *_xpn_array_schema("reported_by_names", "Allergy reporter names", "IAM-14"),
     ]
+    + _xcn_schema("reported_by", "Reported by", "IAM-14")
     + _cwe_schema("relationship_to_patient_code", "Relationship to patient", "IAM-15")
     + _cwe_schema("alert_device_code", "Alert device code", "IAM-16")
     + _cwe_schema("allergy_clinical_status_code", "Allergy clinical status", "IAM-17")

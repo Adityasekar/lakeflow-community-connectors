@@ -2121,8 +2121,8 @@ def register_lakeflow_source(spark):
             _s("onset_date",                          "Allergy onset date (IAM-11)"),
             _s("onset_date_text",                     "Free-text onset date description (IAM-12)"),
             _ts("reported_datetime",                  "When the allergy was reported (IAM-13)"),
-            *_xpn_array_schema("reported_by_names", "Allergy reporter names", "IAM-14"),
         ]
+        + _xcn_schema("reported_by", "Reported by", "IAM-14")
         + _cwe_schema("relationship_to_patient_code", "Relationship to patient", "IAM-15")
         + _cwe_schema("alert_device_code", "Alert device code", "IAM-16")
         + _cwe_schema("allergy_clinical_status_code", "Allergy clinical status", "IAM-17")
@@ -2842,7 +2842,8 @@ def register_lakeflow_source(spark):
         """
         if not s:
             return None
-        m = _DTM_RE.match(s.strip())
+        cleaned = s.strip().strip("()")
+        m = _DTM_RE.match(cleaned)
         if not m:
             return None
         y, mo, d, h, mi, sec, tz = m.groups()
@@ -3707,7 +3708,7 @@ def register_lakeflow_source(spark):
             "onset_date": _v(seg.get_field(11)),
             "onset_date_text": _v(seg.get_field(12)),
             "reported_datetime": _parse_dtm(seg.get_field(13)),
-            **_xpn_array_fields(seg, 14, "reported_by_names"),
+            **_xcn_fields(seg, 14, "reported_by"),
             **_cwe_fields(seg, 15, "relationship_to_patient_code", repeating=False),
             **_cwe_fields(seg, 16, "alert_device_code", repeating=False),
             **_cwe_fields(seg, 17, "allergy_clinical_status_code", repeating=False),

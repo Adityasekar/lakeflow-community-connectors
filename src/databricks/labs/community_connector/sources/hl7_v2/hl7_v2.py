@@ -90,7 +90,8 @@ def _parse_dtm(s: str) -> str | None:
     """
     if not s:
         return None
-    m = _DTM_RE.match(s.strip())
+    cleaned = s.strip().strip("()")
+    m = _DTM_RE.match(cleaned)
     if not m:
         return None
     y, mo, d, h, mi, sec, tz = m.groups()
@@ -955,7 +956,7 @@ def _extract_iam(seg: HL7Segment) -> dict:
         "onset_date": _v(seg.get_field(11)),
         "onset_date_text": _v(seg.get_field(12)),
         "reported_datetime": _parse_dtm(seg.get_field(13)),
-        **_xpn_array_fields(seg, 14, "reported_by_names"),
+        **_xcn_fields(seg, 14, "reported_by"),
         **_cwe_fields(seg, 15, "relationship_to_patient_code", repeating=False),
         **_cwe_fields(seg, 16, "alert_device_code", repeating=False),
         **_cwe_fields(seg, 17, "allergy_clinical_status_code", repeating=False),
