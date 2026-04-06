@@ -1761,7 +1761,7 @@ class HL7V2LakeflowConnect(LakeflowConnect):
         body = self._api_get({
             "view": "FULL",
             "pageSize": "1",
-            "orderBy": "createTime asc",
+            "orderBy": "sendTime asc",
         })
         messages = body.get("hl7V2Messages", [])
         if messages:
@@ -1784,7 +1784,7 @@ class HL7V2LakeflowConnect(LakeflowConnect):
                 "view": "FULL",
                 "pageSize": str(_MAX_PAGE_SIZE),
                 "filter": filter_str,
-                "orderBy": "createTime asc",
+                "orderBy": "sendTime asc",
             }
             if page_token:
                 params["pageToken"] = page_token

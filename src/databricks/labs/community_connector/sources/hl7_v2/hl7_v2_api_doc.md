@@ -1028,11 +1028,11 @@ https://healthcare.googleapis.com/v1/projects/{project_id}/locations/{location}/
 | `pageSize` | `1000` | Max allowed value |
 | `pageToken` | `<token from prior response>` | Pagination; omit on first request |
 | `filter` | `createTime > "2024-01-01T00:00:00Z"` | Incremental filtering by createTime |
-| `orderBy` | `createTime asc` | Ensures cursor advances monotonically |
+| `orderBy` | `sendTime asc` | Only `sendTime` is supported for ordering; ensures monotonic pagination |
 
 **Example Request**:
 ```
-GET https://healthcare.googleapis.com/v1/projects/my-project/locations/us-central1/datasets/my-dataset/hl7V2Stores/my-store/messages?view=FULL&pageSize=1000&filter=createTime>"2024-01-01T00:00:00Z"&orderBy=createTime+asc
+GET https://healthcare.googleapis.com/v1/projects/my-project/locations/us-central1/datasets/my-dataset/hl7V2Stores/my-store/messages?view=FULL&pageSize=1000&filter=createTime>"2024-01-01T00:00:00Z"&orderBy=sendTime+asc
 Authorization: Bearer <token>
 ```
 
