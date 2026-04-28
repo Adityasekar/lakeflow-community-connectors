@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lakeflow-community-connectors-dicomweb"
+version = "0.1.0"
+description = "DICOMweb (QIDO-RS / WADO-RS) connector for Lakeflow Community Connectors"
+requires-python = ">=3.10"
+# The DICOMweb client uses only the Python stdlib (urllib, base64, json, time)
+# for HTTP, so the runtime dependency surface is intentionally tiny: just
+# pyspark for the data-source API + the parent framework for the
+# LakeflowConnect / SupportsPartitionedStream interfaces.
+dependencies = [
+    "pyspark>=3.5.0",
+    "lakeflow-community-connectors>=0.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+# Tells setuptools that this subdirectory IS the package
+# `databricks.labs.community_connector.sources.dicomweb`. Mirrors the same
+# trick used by the sibling hl7_v2 sub-package so each source ships as its
+# own pip-installable wheel — the parent framework's pyproject.toml
+# deliberately excludes `sources*` from its own wheel.
+[tool.setuptools]
+packages = ["databricks.labs.community_connector.sources.dicomweb"]
+
+[tool.setuptools.package-dir]
+"databricks.labs.community_connector.sources.dicomweb" = "."
+
+[tool.setuptools.package-data]
+"*" = ["*.json", "*.md", "*.yaml", "*.png"]
