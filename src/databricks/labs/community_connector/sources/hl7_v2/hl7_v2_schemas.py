@@ -41,7 +41,7 @@ def _s(name: str, comment: str = "") -> StructField:
     return StructField(name, StringType(), nullable=True)
 
 
-def _i(name: str, comment: str = "") -> StructField:
+def _int_field(name: str, comment: str = "") -> StructField:
     """Nullable LongType field (see ``_s`` for metadata rationale)."""
     return StructField(name, LongType(), nullable=True)
 
@@ -63,7 +63,7 @@ def _pk_s(name: str, comment: str = "") -> StructField:
     return StructField(name, StringType(), nullable=False)
 
 
-def _pk_i(name: str, comment: str = "") -> StructField:
+def _pk_int_field(name: str, comment: str = "") -> StructField:
     """NOT NULL LongType field used as (part of) a composite primary key."""
     return StructField(name, LongType(), nullable=False)
 
@@ -470,7 +470,7 @@ MSH_SCHEMA = StructType(
         _s("message_control_id",               "Unique message control ID assigned by the sending application (MSH-10); same as message_id"),
         _s("processing_id",                    "Processing mode (MSH-11): P=Production, T=Training, D=Debugging"),
         _s("version_id",                       "HL7 version used for this message (MSH-12), e.g. 2.3, 2.5.1; same as hl7_version"),
-        _i("sequence_number",                  "Optional sequence number for application-level message ordering (MSH-13)"),
+        _int_field("sequence_number",                  "Optional sequence number for application-level message ordering (MSH-13)"),
         _s("continuation_pointer",             "Pointer used to continue a fragmented message (MSH-14); rarely populated"),
         _s("accept_acknowledgment_type",       "Conditions requiring an accept (transport-level) acknowledgment (MSH-15): AL, NE, SU, ER"),
         _s("application_acknowledgment_type",  "Conditions requiring an application-level acknowledgment (MSH-16): AL, NE, SU, ER"),
@@ -498,7 +498,7 @@ MSH_SCHEMA = StructType(
 PID_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _i("set_id",                        "Sequence number when multiple PID segments appear in a message (PID-1)"),
+        _int_field("set_id",                        "Sequence number when multiple PID segments appear in a message (PID-1)"),
         _s("patient_external_id",           "External patient ID from a prior system (PID-2, deprecated in v2.7)"),
         *_cx_schema("patient_id", "Patient identifier", "PID-3"),
         _s("alternate_patient_id",          "Alternate patient identifier from a prior system (PID-4, deprecated in v2.7)"),
@@ -522,7 +522,7 @@ PID_SCHEMA = StructType(
         *_cwe_schema("ethnic_group", "Ethnic group", "PID-22"),
         _s("birth_place",                   "Birthplace as free text (PID-23)"),
         _s("multiple_birth_indicator",      "Whether the patient is one of a multiple birth: Y or N (PID-24)"),
-        _i("birth_order",                   "Birth sequence number for multiple-birth patients, e.g. 1, 2, 3 (PID-25)"),
+        _int_field("birth_order",                   "Birth sequence number for multiple-birth patients, e.g. 1, 2, 3 (PID-25)"),
         *_cwe_schema("citizenship", "Citizenship", "PID-26"),
         *_cwe_schema("veterans_military_status", "Veterans military status", "PID-27"),
         *_cwe_schema("nationality", "Nationality", "PID-28"),
@@ -548,7 +548,7 @@ PID_SCHEMA = StructType(
 PV1_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _i("set_id",                       "Sequence number when multiple PV1 segments appear (PV1-1)"),
+        _int_field("set_id",                       "Sequence number when multiple PV1 segments appear (PV1-1)"),
     ]
     + _cwe_schema("patient_class", "Patient class (CWE)", "PV1-2")
     + [
@@ -636,7 +636,7 @@ PV1_SCHEMA = StructType(
 OBR_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _pk_i("set_id",                           "Sequence number of this OBR within the message; part of composite primary key (OBR-1)"),
+        _pk_int_field("set_id",                           "Sequence number of this OBR within the message; part of composite primary key (OBR-1)"),
     ]
     + _ei_schema("placer_order_number", "Placer order number (EI)", "OBR-2")
     + _ei_schema("filler_order_number", "Filler order number (EI)", "OBR-3")
@@ -685,7 +685,7 @@ OBR_SCHEMA = StructType(
         _s("technician",                          "Technician who performed the test (OBR-34.1)"),
         _s("transcriptionist",                    "Person who transcribed the result (OBR-35.1)"),
         _ts("scheduled_datetime",                 "Scheduled date/time for the observation, parsed to timestamp (OBR-36)"),
-        _i("number_of_sample_containers",         "Number of specimen containers required (OBR-37)"),
+        _int_field("number_of_sample_containers",         "Number of specimen containers required (OBR-37)"),
     ]
     + _cwe_schema("transport_logistics", "Transport logistics (CWE, first repetition)", "OBR-38")
     + _cwe_schema("collectors_comment", "Collector comment (CWE, first repetition)", "OBR-39")
@@ -718,7 +718,7 @@ OBR_SCHEMA = StructType(
 OBX_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _pk_i("set_id",                       "Sequence number of this OBX within the message; part of composite primary key (OBX-1)"),
+        _pk_int_field("set_id",                       "Sequence number of this OBX within the message; part of composite primary key (OBX-1)"),
         _s("value_type",                      "Data type of the observation value (OBX-2): NM=Numeric, ST=String, CWE=Coded, TX=Text, TS=Timestamp"),
     ]
     + _cwe_schema("observation_id", "Observation identifier (CWE)", "OBX-3")
@@ -775,7 +775,7 @@ OBX_SCHEMA = StructType(
 AL1_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _pk_i("set_id",               "Sequence number of this allergy within the message; part of composite primary key (AL1-1)"),
+        _pk_int_field("set_id",               "Sequence number of this allergy within the message; part of composite primary key (AL1-1)"),
     ]
     + _cwe_schema("allergen_type_code", "Allergen type", "AL1-2")
     + _cwe_schema("allergen_code", "Allergen (CWE)", "AL1-3")
@@ -793,7 +793,7 @@ AL1_SCHEMA = StructType(
 DG1_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _pk_i("set_id",                            "Sequence number of this diagnosis within the message; part of composite primary key (DG1-1)"),
+        _pk_int_field("set_id",                            "Sequence number of this diagnosis within the message; part of composite primary key (DG1-1)"),
         _s("diagnosis_coding_method",              "Diagnosis coding method (DG1-2, deprecated in v2.7); use diagnosis_coding_system"),
     ]
     + _cwe_schema("diagnosis_code", "Diagnosis (CWE)", "DG1-3")
@@ -810,10 +810,10 @@ DG1_SCHEMA = StructType(
     ]
     + _cwe_schema("outlier_type", "Outlier type", "DG1-11")
     + [
-        _i("outlier_days",                         "Number of outlier days beyond the DRG length-of-stay threshold (DG1-12)"),
+        _int_field("outlier_days",                         "Number of outlier days beyond the DRG length-of-stay threshold (DG1-12)"),
         _s("outlier_cost",                         "Outlier cost amount beyond the DRG cost threshold (DG1-13)"),
         _s("grouper_version_and_type",             "Version and type of the DRG grouper software (DG1-14)"),
-        _i("diagnosis_priority",                   "Priority rank of this diagnosis; 1=principal diagnosis (DG1-15)"),
+        _int_field("diagnosis_priority",                   "Priority rank of this diagnosis; 1=principal diagnosis (DG1-15)"),
     ]
     + _xcn_schema("diagnosing_clinician", "Diagnosing clinician", "DG1-16")
     + [
@@ -841,7 +841,7 @@ DG1_SCHEMA = StructType(
 NK1_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _pk_i("set_id",                  "Sequence number of this next-of-kin record within the message; part of composite primary key (NK1-1)"),
+        _pk_int_field("set_id",                  "Sequence number of this next-of-kin record within the message; part of composite primary key (NK1-1)"),
         *_xpn_array_schema("nk_names", "Next of kin names", "NK1-2"),
         _s("relationship",               "Relationship to patient composite (NK1-3), raw; use relationship_code_* CWE fields"),
     ]
@@ -978,8 +978,8 @@ PV2_SCHEMA = StructType(
     + [
         _ts("expected_admit_datetime",                 "Expected admission date/time (PV2-8)"),
         _ts("expected_discharge_datetime",             "Expected discharge date/time (PV2-9)"),
-        _i("estimated_length_of_inpatient_stay",       "Estimated length of inpatient stay in days (PV2-10)"),
-        _i("actual_length_of_inpatient_stay",          "Actual length of inpatient stay in days (PV2-11)"),
+        _int_field("estimated_length_of_inpatient_stay",       "Estimated length of inpatient stay in days (PV2-10)"),
+        _int_field("actual_length_of_inpatient_stay",          "Actual length of inpatient stay in days (PV2-11)"),
         _s("visit_description",                        "Free-text visit description (PV2-12)"),
     ]
     + _xcn_schema("referral_source", "Referral source", "PV2-13")
@@ -992,7 +992,7 @@ PV2_SCHEMA = StructType(
     + _cwe_schema("special_program_code", "Special program code (CWE)", "PV2-18")
     + [
         _s("retention_indicator",                      "Retention indicator Y/N (PV2-19)"),
-        _i("expected_number_of_insurance_plans",       "Expected number of insurance plans (PV2-20)"),
+        _int_field("expected_number_of_insurance_plans",       "Expected number of insurance plans (PV2-20)"),
     ]
     + _cwe_schema("visit_publicity_code", "Visit publicity code (CWE)", "PV2-21")
     + [
@@ -1062,7 +1062,7 @@ MRG_SCHEMA = StructType(
 IAM_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _pk_i("set_id",                          "Sequence number for this IAM segment within the message (IAM-1)"),
+        _pk_int_field("set_id",                          "Sequence number for this IAM segment within the message (IAM-1)"),
     ]
     + _cwe_schema("allergen_type_code", "Allergen type", "IAM-2")
     + _cwe_schema("allergen_code", "Allergen (CWE)", "IAM-3")
@@ -1114,7 +1114,7 @@ IAM_SCHEMA = StructType(
 PR1_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _pk_i("set_id",                    "Sequence number for this PR1 segment within the message (PR1-1)"),
+        _pk_int_field("set_id",                    "Sequence number for this PR1 segment within the message (PR1-1)"),
         _s("procedure_coding_method",      "Procedure coding method (PR1-2, deprecated)"),
     ]
     + _cwe_schema("procedure_code", "Procedure (CWE)", "PR1-3")
@@ -1122,12 +1122,12 @@ PR1_SCHEMA = StructType(
         _s("procedure_description",        "Procedure description (PR1-4, deprecated)"),
         _ts("procedure_datetime",          "When the procedure was performed (PR1-5)"),
         _s("procedure_functional_type",    "Functional type (PR1-6): A=Anesthesia, P=Procedure, I=Invasion"),
-        _i("procedure_minutes",            "Duration of the procedure in minutes (PR1-7)"),
+        _int_field("procedure_minutes",            "Duration of the procedure in minutes (PR1-7)"),
     ]
     + _xcn_schema("anesthesiologist", "Anesthesiologist", "PR1-8")
     + [
         _s("anesthesia_code",              "Anesthesia code (PR1-9)"),
-        _i("anesthesia_minutes",           "Anesthesia duration in minutes (PR1-10)"),
+        _int_field("anesthesia_minutes",           "Anesthesia duration in minutes (PR1-10)"),
     ]
     + _xcn_schema("surgeon", "Surgeon", "PR1-11")
     + _xcn_schema("procedure_practitioner", "Procedure practitioner", "PR1-12")
@@ -1161,7 +1161,7 @@ PR1_SCHEMA = StructType(
 ORC_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _pk_i("set_id",                               "Synthetic sequence number for multiple ORC segments per message"),
+        _pk_int_field("set_id",                               "Synthetic sequence number for multiple ORC segments per message"),
         _s("order_control",                            "Order control code (ORC-1): NW=New, CA=Cancel, DC=Discontinue, XO=Change, SC=Status"),
     ]
     + _ei_schema("placer_order_number", "Placer order number (EI)", "ORC-2")
@@ -1222,7 +1222,7 @@ ORC_SCHEMA = StructType(
 NTE_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _pk_i("set_id",            "Sequence number for this NTE segment within the message (NTE-1)"),
+        _pk_int_field("set_id",            "Sequence number for this NTE segment within the message (NTE-1)"),
         _s("source_of_comment",    "Source of comment (NTE-2): L=Ancillary/Filler, P=Orderer/Placer, O=Other"),
         _s("comment",              "Free-text comment/note content (NTE-3); may contain formatted text"),
     ]
@@ -1243,7 +1243,7 @@ NTE_SCHEMA = StructType(
 SPM_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _pk_i("set_id",                      "Sequence number for this SPM segment within the message (SPM-1)"),
+        _pk_int_field("set_id",                      "Sequence number for this SPM segment within the message (SPM-1)"),
     ]
     + _ei_schema("specimen_id", "Specimen identifier (EI)", "SPM-2")
     + [
@@ -1259,7 +1259,7 @@ SPM_SCHEMA = StructType(
     + _cwe_schema("specimen_role", "Specimen role", "SPM-11")
     + [
         _s("specimen_collection_amount",      "Collection amount with units (SPM-12.1)"),
-        _i("grouped_specimen_count",          "Number of grouped specimens (SPM-13)"),
+        _int_field("grouped_specimen_count",          "Number of grouped specimens (SPM-13)"),
         _s("specimen_description",            "Free-text specimen description (SPM-14)"),
     ]
     + _cwe_schema("specimen_handling_code", "Handling instructions code", "SPM-15")
@@ -1276,7 +1276,7 @@ SPM_SCHEMA = StructType(
     + _cwe_schema("specimen_condition", "Specimen condition", "SPM-24")
     + [
         _s("specimen_current_quantity",       "Current specimen quantity (SPM-25.1)"),
-        _i("number_of_specimen_containers",   "Number of specimen containers (SPM-26)"),
+        _int_field("number_of_specimen_containers",   "Number of specimen containers (SPM-26)"),
     ]
     + _cwe_schema("container_type", "Container type", "SPM-27")
     + _cwe_schema("container_condition", "Container condition", "SPM-28")
@@ -1298,7 +1298,7 @@ SPM_SCHEMA = StructType(
 IN1_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _pk_i("set_id",                       "Sequence number for this IN1 segment within the message (IN1-1)"),
+        _pk_int_field("set_id",                       "Sequence number for this IN1 segment within the message (IN1-1)"),
     ]
     + _cwe_schema("insurance_plan", "Insurance plan", "IN1-2")
     + _xon_schema("insurance_company", "Insurance company", "IN1-3")
@@ -1342,13 +1342,13 @@ IN1_SCHEMA = StructType(
     + [
         _s("type_of_agreement_code",           "Agreement type (IN1-31)"),
         _s("billing_status",                   "Billing status (IN1-32)"),
-        _i("lifetime_reserve_days",            "Lifetime reserve days (IN1-33)"),
-        _i("delay_before_lr_day",              "Delay before lifetime reserve day (IN1-34)"),
+        _int_field("lifetime_reserve_days",            "Lifetime reserve days (IN1-33)"),
+        _int_field("delay_before_lr_day",              "Delay before lifetime reserve day (IN1-34)"),
         _s("company_plan_code",                "Company plan code (IN1-35)"),
         _s("policy_number",                    "Policy number (IN1-36)"),
         _s("policy_deductible",                "Policy deductible amount (IN1-37.1)"),
         _s("policy_limit_amount",              "Policy limit amount (IN1-38.1)"),
-        _i("policy_limit_days",                "Policy limit in days (IN1-39)"),
+        _int_field("policy_limit_days",                "Policy limit in days (IN1-39)"),
         _s("room_rate_semi_private",           "Semi-private room rate (IN1-40.1, deprecated)"),
         _s("room_rate_private",                "Private room rate (IN1-41.1, deprecated)"),
     ]
@@ -1379,7 +1379,7 @@ IN1_SCHEMA = StructType(
 GT1_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _pk_i("set_id",                           "Sequence number for this GT1 segment within the message (GT1-1)"),
+        _pk_int_field("set_id",                           "Sequence number for this GT1 segment within the message (GT1-1)"),
     ]
     + _cx_schema("guarantor_number", "Guarantor number (CX)", "GT1-2")
     + [
@@ -1401,7 +1401,7 @@ GT1_SCHEMA = StructType(
         _s("guarantor_ssn",                        "Guarantor social security number (GT1-12)"),
         _s("guarantor_date_begin",                 "Guarantor start date (GT1-13)"),
         _s("guarantor_date_end",                   "Guarantor end date (GT1-14)"),
-        _i("guarantor_priority",                   "Guarantor priority (GT1-15)"),
+        _int_field("guarantor_priority",                   "Guarantor priority (GT1-15)"),
         *_xpn_array_schema("guarantor_employer_names", "Guarantor employer names", "GT1-16"),
     ]
     + _xad_schema("guarantor_employer_address", "Guarantor employer address", "GT1-17")
@@ -1422,7 +1422,7 @@ GT1_SCHEMA = StructType(
     + _cwe_schema("guarantor_charge_adjustment_code", "Guarantor charge adjustment", "GT1-26")
     + [
         _s("guarantor_household_annual_income",    "Household annual income (GT1-27.1)"),
-        _i("guarantor_household_size",             "Household size (GT1-28)"),
+        _int_field("guarantor_household_size",             "Household size (GT1-28)"),
     ]
     + _cx_schema("guarantor_employer_id_number", "Guarantor employer ID (CX)", "GT1-29")
     + _cwe_schema("guarantor_marital_status_code", "Guarantor marital status", "GT1-30")
@@ -1478,7 +1478,7 @@ GT1_SCHEMA = StructType(
 FT1_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _pk_i("set_id",                              "Sequence number for this FT1 segment within the message (FT1-1)"),
+        _pk_int_field("set_id",                              "Sequence number for this FT1 segment within the message (FT1-1)"),
         _s("transaction_id",                          "Unique transaction identifier (FT1-2)"),
         _s("transaction_batch_id",                    "Batch identifier (FT1-3)"),
         _s("transaction_date",                        "Transaction date/time range start (FT1-4.1)"),
@@ -1489,7 +1489,7 @@ FT1_SCHEMA = StructType(
     + [
         _s("transaction_description",                 "Transaction description (FT1-8, deprecated)"),
         _s("transaction_description_alt",             "Alternate transaction description (FT1-9, deprecated)"),
-        _i("transaction_quantity",                    "Transaction quantity (FT1-10)"),
+        _int_field("transaction_quantity",                    "Transaction quantity (FT1-10)"),
         _s("transaction_amount_extended",             "Extended amount: quantity x unit price (FT1-11.1)"),
         _s("transaction_amount_unit",                 "Unit price (FT1-12.1)"),
     ]
@@ -1552,8 +1552,8 @@ FT1_SCHEMA = StructType(
 RXA_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _pk_i("set_id",                                "Give sub-ID counter (RXA-1)"),
-        _i("administration_sub_id_counter",            "Administration sub-ID counter (RXA-2)"),
+        _pk_int_field("set_id",                                "Give sub-ID counter (RXA-1)"),
+        _int_field("administration_sub_id_counter",            "Administration sub-ID counter (RXA-2)"),
         _ts("datetime_start_of_administration",        "Administration start date/time (RXA-3)"),
         _ts("datetime_end_of_administration",          "Administration end date/time (RXA-4)"),
     ]
@@ -1599,7 +1599,7 @@ SCH_SCHEMA = StructType(
     + _ei_schema("placer_appointment_id", "Placer appointment ID (EI)", "SCH-1")
     + _ei_schema("filler_appointment_id", "Filler appointment ID (EI)", "SCH-2")
     + [
-        _i("occurrence_number",            "Occurrence number (SCH-3)"),
+        _int_field("occurrence_number",            "Occurrence number (SCH-3)"),
     ]
     + _ei_schema("placer_group_number", "Placer group number (EI)", "SCH-4")
     + _cwe_schema("schedule_id", "Schedule identifier", "SCH-5")
@@ -1607,7 +1607,7 @@ SCH_SCHEMA = StructType(
     + _cwe_schema("appointment_reason", "Reason for appointment", "SCH-7")
     + _cwe_schema("appointment_type", "Appointment type", "SCH-8")
     + [
-        _i("appointment_duration",         "Appointment duration in minutes (SCH-9, deprecated)"),
+        _int_field("appointment_duration",         "Appointment duration in minutes (SCH-9, deprecated)"),
     ]
     + _cwe_schema("appointment_duration_units", "Duration units", "SCH-10")
     + [
@@ -1645,7 +1645,7 @@ SCH_SCHEMA = StructType(
 TXA_SCHEMA = StructType(
     _METADATA_FIELDS
     + [
-        _i("set_id",                              "Sequence number (TXA-1)"),
+        _int_field("set_id",                              "Sequence number (TXA-1)"),
         _s("document_type",                        "Document type (TXA-2): DS=Discharge Summary, HP=History and Physical, OP=Operative Note"),
         _s("document_content_presentation",        "Content presentation type (TXA-3)"),
         _ts("activity_datetime",                   "Activity date/time (TXA-4)"),
