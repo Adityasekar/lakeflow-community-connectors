@@ -5,7 +5,7 @@ collection and received datetimes. Multiple SPM segments can appear.
 """
 from __future__ import annotations
 
-from tests.unit.sources.hl7_v2._helpers import extract_segment, load_sample, parse_first
+from tests.unit.sources.hl7_v2.hl7_v2_test_utils import extract_segment, load_sample, parse_first
 
 from databricks.labs.community_connector.sources.hl7_v2.hl7_v2 import _extract_spm
 from databricks.labs.community_connector.sources.hl7_v2.hl7_v2_parser import (

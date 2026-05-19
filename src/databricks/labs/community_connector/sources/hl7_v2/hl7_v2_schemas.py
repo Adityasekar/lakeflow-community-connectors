@@ -17,6 +17,12 @@ Every table includes seven common metadata columns:
     create_time       — RFC3339 createTime from the GCP API (incremental cursor)
     raw_segment       — raw pipe-delimited segment text for lossless recovery
 """
+# Schema definitions use visually-aligned ``_s(name, comment)`` rows so that
+# columns line up with the HL7 v2.9 spec tables for easy cross-reference;
+# breaking each row at 100 chars would destroy that alignment for negligible
+# readability gain. Same convention as ``sap_successfactors/table_schemas.py``
+# and ``fhir/profiles/base_r4.py``.
+# pylint: disable=line-too-long,too-many-lines
 
 from pyspark.sql.types import ArrayType, LongType, StringType, StructField, StructType
 
