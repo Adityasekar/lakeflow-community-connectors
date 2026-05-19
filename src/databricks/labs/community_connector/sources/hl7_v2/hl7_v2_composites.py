@@ -306,6 +306,55 @@ def _ei_array_fields(
     return {column_name: result if result else None}
 
 
+def _xtn_array_fields(
+    seg: HL7Segment, field_n: int, column_name: str
+) -> dict:
+    """XTN (Extended Telecommunication Number) — all repetitions as a list of dicts.
+
+    Walks every ~-separated repetition and decomposes its 18 components.
+    Sub-components of components 15/16/17 are flattened to their .1 value
+    (matching the flat ``_xtn_fields`` helper), since downstream callers
+    have not historically needed the deeper structure.
+    """
+    raw = seg.get_field(field_n)
+    if not raw:
+        return {column_name: None}
+    reps = raw.split(seg._enc.rep_sep)
+    result = []
+    for rep in reps:
+        if not rep:
+            continue
+        parts = rep.split(seg._enc.comp_sep)
+        def gc(i, _p=parts):
+            return _v(_p[i - 1]) if len(_p) >= i else None
+        def gsc(i, sub, _p=parts):
+            if len(_p) < i or not _p[i - 1]:
+                return None
+            subs = _p[i - 1].split(seg._enc.sub_comp_sep)
+            return _v(subs[sub - 1]) if len(subs) >= sub else None
+        result.append({
+            "number": gc(1),
+            "use_code": gc(2),
+            "equipment_type": gc(3),
+            "communication_address": gc(4),
+            "country_code": gc(5),
+            "area_code": gc(6),
+            "local_number": gc(7),
+            "extension": gc(8),
+            "any_text": gc(9),
+            "extension_prefix": gc(10),
+            "speed_dial_code": gc(11),
+            "unformatted_number": gc(12),
+            "effective_start_date": gc(13),
+            "expiration_date": gc(14),
+            "expiration_reason": gsc(15, 1),
+            "protection_code": gsc(16, 1),
+            "shared_telecom_id": gsc(17, 1),
+            "preference_order": gc(18),
+        })
+    return {column_name: result if result else None}
+
+
 def _xon_fields(
     seg: HL7Segment, field_n: int, prefix: str, *, repeating: bool = True
 ) -> dict:

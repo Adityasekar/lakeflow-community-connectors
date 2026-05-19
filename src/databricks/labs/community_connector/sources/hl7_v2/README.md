@@ -177,29 +177,68 @@ All HL7 v2 fields are stored as `STRING`. The connector extracts **all** compone
 | ST, TX, FT, IS, ID | Plain text, coded values | STRING | Stored as-is |
 | NM, SI | Numeric strings | STRING | Cast with `CAST(col AS INT)` as needed |
 | TS, DT, TM | Timestamps, dates, times | STRING | HL7 DTM format; datetime fields like `date_of_birth` are parsed to `TIMESTAMP` |
-| CE, CWE, CNE | Coded elements | STRING (or `ARRAY<STRUCT>` if repeating) | All 6 components: `code`, `text`, `coding_system`, `alt_code`, `alt_text`, `alt_coding_system` |
+| CE, CWE, CNE | Coded elements | STRING (or `ARRAY<STRUCT>` if repeating) | All 9 active components: `code`, `text`, `coding_system`, `alt_code`, `alt_text`, `alt_coding_system`, `coding_system_version`, `alt_coding_system_version`, `original_text` |
 | XPN | Person name | STRING (or `ARRAY<STRUCT>` if repeating) | ALL 14 active components via `_xpn_fields()` helper: `family_name` (1), `given_name` (2), `middle_name` (3), `suffix` (4), `prefix` (5), `degree` (6), `name_type_code` (7), `name_representation_code` (8), `name_context` (9), `name_assembly_order` (11), `name_effective_date` (12), `name_expiration_date` (13), `professional_suffix` (14), `called_by` (15). |
 | XAD | Address | STRING | Components: `street`, `other_designation`, `city`, `state`, `zip`, `country`, `type` |
 | XCN | Composite ID/name | STRING | Components: `id`, `family_name`, `given_name`, `prefix` |
 | XON | Organization name | STRING | All 10 components: `name`, `type_code`, `id`, `check_digit`, `check_digit_scheme`, `assigning_authority`, `id_type_code`, `assigning_facility`, `name_rep_code`, `identifier` |
 | HD | Hierarchic designator | STRING | All 3 components: `namespace_id`, `universal_id`, `universal_id_type` |
-| EI | Entity identifier | STRING (or `ARRAY<STRUCT>` if repeating) | All 4 components: `entity_id`, `namespace_id`, `universal_id`, `universal_id_type` |
+| EI | Entity identifier | STRING (or `ARRAY<STRUCT>` if repeating) | All 4 components: `entity_identifier`, `namespace_id`, `universal_id`, `universal_id_type` |
 | CX | Extended composite ID | STRING | Key components: `id_value`, `check_digit`, `assigning_authority`, `type_code` |
 | PL | Person location | STRING | Components: `point_of_care`, `room`, `bed`, `facility`, `status`, `type` |
 
 **Key rules for composite type extraction:**
 - Every component of a composite type gets its own column — do not extract only component 1 and discard the rest.
 - **Cardinality-`1` fields** (separated by `~` only if the sender erroneously sends multiple) are flattened into individual `STRING` columns via `_xpn_fields()` / `get_rep_component`. Only the first repetition is captured for these; the full raw value is preserved in `raw_segment`.
-- **Cardinality-`*` fields** (truly repeating per HL7 spec — e.g. `patient_names`, `interpretation_codes`, `character_set`, `message_profile_identifiers`) are stored as Spark `ARRAY` columns with one entry per repetition via the `_xpn_array_fields()` / `_cwe_array_fields()` / `_ei_array_fields()` helpers. See the "Non-string column types" subsection below for the full enumeration of 24 array columns.
+- **Cardinality-`*` fields** (truly repeating per HL7 spec — e.g. `patient_names`, `race`, `ethnic_group`, `citizenship`, `interpretation_codes`, `character_set`, `message_profile_identifiers`, `allergy_reaction`) are stored as Spark `ARRAY` columns with one entry per repetition via the `_xpn_array_fields()` / `_cwe_array_fields()` / `_ei_array_fields()` / `_xtn_array_fields()` helpers. Every repetition (`~`-separated) is preserved — nothing is silently dropped. See the "Non-string column types" subsection below for the full enumeration of array columns.
 - When a component is itself a composite type (e.g., HD inside CX.4 or XON.6), its sub-components (separated by `&`) are also extracted into individual columns using `get_sub_component`. The raw component value is preserved as well.
+
+### Lenient parsing of `ST 0..*` fields that real senders emit as `CWE`-shape
+
+Two HL7 v2.9 fields — **`AL1-5` (Patient Allergy Reaction)** and **`IAM-5` (Patient Adverse Reaction)** — are spec-typed as `ST 0..*` (repeating plain string), but in practice EHRs routinely emit `CWE`-shape values here, e.g. `HIV^Hives^HL70129~RSH^Rash^HL70129`. We model these leniently as `ARRAY<STRUCT<...9 CWE components...>>`:
+
+- When the sender emits **plain ST**, the value lands in element `[0].code` with the other 8 subfields `NULL`.
+- When the sender emits **CWE-shape**, all components (`code`, `text`, `coding_system`, …) populate.
+- Either way, **every `~`-separated repetition is preserved**.
+
+This means `SELECT allergy_reaction[0].code FROM al1` works for both kinds of sender, and `SELECT explode(allergy_reaction) FROM al1` always recovers every reaction the sender included.
+
+### Querying array-of-struct columns
+
+For any `ARRAY<STRUCT<...>>` column (`pid.race`, `al1.allergy_reaction`, `obr.order_callback_phone`, etc.), use one of these patterns:
+
+```sql
+-- First repetition only (closest analog to the old flat columns)
+SELECT
+  message_id,
+  race[0].code            AS race_code,
+  race[0].text            AS race_text,
+  race[0].coding_system   AS race_coding_system
+FROM pid;
+
+-- Fan out one row per repetition
+SELECT
+  message_id,
+  reaction.code,
+  reaction.text
+FROM al1
+LATERAL VIEW explode(allergy_reaction) AS reaction;
+
+-- Count repetitions or filter by any one of them
+SELECT message_id, size(citizenship) AS num_citizenships FROM pid;
+SELECT message_id FROM pid
+WHERE exists(race, r -> r.code = '2028-9');
+```
 
 **Non-string column types:**
 
 - `set_id` is stored as `BIGINT`.
 - Datetime fields parsed from HL7 DTM format are stored as `TIMESTAMP`.
-- Truly-repeating HL7 fields (cardinality `*`, separated by `~`) are stored as Spark `ARRAY` columns rather than collapsed to first-repetition strings. There are 24 such columns across 11 tables (`pid`, `nk1`, `gt1`, `in1`, `mrg`, `msh`, `pd1`, `pv1`, `pv2`, `obr`, `obx`). Three element shapes:
+- Truly-repeating HL7 fields (cardinality `*`, separated by `~`) are stored as Spark `ARRAY` columns rather than collapsed to first-repetition strings. There are 70+ such columns spanning effectively every segment table. Four element shapes:
   - `ARRAY<STRUCT<...>>` of **XPN (person name)** structs — one entry per repetition of person-name fields, e.g. `pid.patient_names`, `pid.mothers_maiden_names`, `nk1.contact_persons`, `gt1.guarantor_names`, `mrg.prior_patient_names`. The struct has 14 fields (`family_name`, `given_name`, `middle_name`, `suffix`, `prefix`, `degree`, `name_type_code`, `name_representation_code`, `name_context`, `name_assembly_order`, `name_effective_date`, `name_expiration_date`, `professional_suffix`, `called_by`).
-  - `ARRAY<STRUCT<...>>` of **CWE / EI** structs — one entry per repetition of coded-element or entity-identifier fields, e.g. `obx.interpretation_codes`, `obr.reason_for_study`, `pv1.ambulatory_status`, `pv2.visit_user_code`, `pv2.notify_clergy_code`, `msh.security_handling_instructions`, `msh.special_access_restriction`, `pd1.living_dependency`, `msh.message_profile_identifiers`.
+  - `ARRAY<STRUCT<...>>` of **CWE / CNE** structs (9 components: `code`, `text`, `coding_system`, `alt_code`, `alt_text`, `alt_coding_system`, `coding_system_version`, `alt_coding_system_version`, `original_text`) — one entry per repetition. Examples: `pid.race`, `pid.ethnic_group`, `pid.citizenship`, `pid.identity_reliability_code`, `nk1.living_dependency`, `nk1.ambulatory_status`, `nk1.citizenship`, `nk1.ethnic_group`, `nk1.contact_reason`, `nk1.race`, `pd1.living_dependency`, `pd1.advance_directive_code`, `pv1.ambulatory_status`, `pv2.visit_user_code`, `pv2.notify_clergy_code`, `pv2.recreational_drug_use_code`, `pv2.precaution_code`, `pv2.advance_directive_code_pv2`, `obr.reason_for_study`, `obr.transport_logistics`, `obr.collectors_comment`, `obr.planned_patient_transport_comment`, `obr.procedure_code_modifier`, `obr.placer_supplemental_service_info`, `obr.filler_supplemental_service_info`, `obx.interpretation_codes`, `obx.observation_method`, `obx.observation_site`, `obx.local_process_control`, `al1.allergy_reaction` (lenient ST), `iam.allergy_reaction` (lenient ST), `pr1.procedure_code_modifier`, `pr1.tissue_type_code`, `spm.specimen_type_modifier`, `spm.specimen_additives`, `spm.specimen_source_site_modifier`, `spm.specimen_role`, `spm.specimen_handling_code`, `spm.specimen_risk_code`, `spm.specimen_reject_reason`, `spm.specimen_condition`, `gt1.citizenship`, `gt1.ethnic_group`, `gt1.guarantor_race`, `ft1.diagnosis_code`, `ft1.ft1_procedure_code_modifier`, `rxa.administration_notes`, `rxa.substance_manufacturer_name`, `rxa.substance_treatment_refusal_reason`, `rxa.indication`, `msh.security_handling_instructions`, `msh.special_access_restriction`.
+  - `ARRAY<STRUCT<...>>` of **EI (entity identifier)** structs (4 components: `entity_identifier`, `namespace_id`, `universal_id`, `universal_id_type`) — e.g. `msh.message_profile_identifiers`, `obx.equipment_instance_identifier`, `sch.sch_placer_order_number`, `sch.sch_filler_order_number`, `txa.placer_order_number`.
+  - `ARRAY<STRUCT<...>>` of **XTN (telecom)** structs (18 components) — e.g. `obr.order_callback_phone`, `orc.call_back_phone`.
   - `ARRAY<STRING>` for repeating simple ID/IS fields — `msh.character_set`, `obx.nature_of_abnormal_test`.
 
 Non-repeating composite fields (single occurrence) remain flattened into separate `STRING` columns rather than wrapped in single-element arrays, matching the convention in the API doc's composite-type table above. The full unparsed value is always preserved in `raw_segment`.

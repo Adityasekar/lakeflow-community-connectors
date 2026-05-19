@@ -28,16 +28,18 @@ class TestPIDExtraction:
     def test_covid_pid_race(self):
         msg = parse_first(load_sample("sample_oru_covid.hl7"))
         row = extract_segment(msg, "PID", _extract_pid)
-        assert row["race"] == "2028-9"
-        assert row["race_text"] == "Asian"
+        # PID-10 race is ArrayType<CWE> (0..* per spec); first rep's components in [0].
+        assert row["race"][0]["code"] == "2028-9"
+        assert row["race"][0]["text"] == "Asian"
         assert row["administrative_sex"] == "F"
 
     def test_gc_pid_ethnicity(self):
         msg = parse_first(load_sample("sample_oru_gc_testing.hl7"))
         row = extract_segment(msg, "PID", _extract_pid)
-        assert row["race"] == "2076-8"
+        assert row["race"][0]["code"] == "2076-8"
         assert row["administrative_sex"] == "M"
-        assert row["ethnic_group"] == "H"
+        # PID-22 ethnic_group is ArrayType<CWE> (0..* per spec).
+        assert row["ethnic_group"][0]["code"] == "H"
 
     def test_comprehensive_pid_full_fields(self):
         msg = parse_first(load_sample("sample_adt_comprehensive.hl7"))
@@ -51,8 +53,8 @@ class TestPIDExtraction:
     def test_lyme_pid_ethnicity(self):
         msg = parse_first(load_sample("sample_oru_lyme.hl7"))
         row = extract_segment(msg, "PID", _extract_pid)
-        assert row["ethnic_group"] == "2135-2"
-        assert row["race"] == "2054-5"
+        assert row["ethnic_group"][0]["code"] == "2135-2"
+        assert row["race"][0]["code"] == "2054-5"
 
 
 class TestPIDMissingFields:
@@ -67,6 +69,7 @@ class TestPIDMissingFields:
         assert row["patient_names"] is None
         assert row["date_of_birth"] is None
         assert row["administrative_sex"] is None
+        # PID-10 race is now ArrayType<CWE>; absent field yields None.
         assert row["race"] is None
         assert row["address_city"] is None
         assert row["ssn"] is None

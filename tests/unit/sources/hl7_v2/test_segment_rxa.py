@@ -22,7 +22,8 @@ class TestRXAExtraction:
         assert row["administered_amount"] == "0.5"
         assert row["administered_units"] == "mL"
         assert row["substance_lot_number"] == "LT12345"
-        assert row["substance_manufacturer_name"] == "MFR001"
+        # RXA-17 substance_manufacturer_name is ArrayType<CWE> (0..* per spec).
+        assert row["substance_manufacturer_name"][0]["code"] == "MFR001"
         assert row["completion_status"] == "CP"
         assert row["datetime_start_of_administration"] is not None
         assert row["datetime_end_of_administration"] is not None
