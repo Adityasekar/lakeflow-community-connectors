@@ -363,6 +363,59 @@ def _ei_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
     ]
 
 
+def _cp_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
+    """CP (Composite Price) — 6 component fields + MO currency sub-component.
+
+    Components: Price (MO; MO.1 quantity stored as ``{prefix}`` and MO.2 ISO
+    4217 denomination stored as ``{prefix}_currency``), Price Type (CP.2,
+    table 0205), From Value (CP.3, NM), To Value (CP.4, NM), Range Units
+    (CP.5, CWE code only), Range Type (CP.6, table 0298).
+    """
+    return [
+        _s(f"{prefix}",             f"{label} price quantity ({field_ref}.1.1, MO)"),
+        _s(f"{prefix}_currency",    f"{label} price ISO 4217 currency code ({field_ref}.1.2, MO)"),
+        _s(f"{prefix}_price_type",  f"{label} price type ({field_ref}.2, ID, Table 0205)"),
+        _s(f"{prefix}_from_value",  f"{label} range from value ({field_ref}.3, NM)"),
+        _s(f"{prefix}_to_value",    f"{label} range to value ({field_ref}.4, NM)"),
+        _s(f"{prefix}_range_units", f"{label} range units code ({field_ref}.5.1, CWE)"),
+        _s(f"{prefix}_range_type",  f"{label} range type ({field_ref}.6, ID, Table 0298)"),
+    ]
+
+
+def _cq_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
+    """CQ (Composite Quantity with Units) — 2 component fields.
+
+    CQ.1 = Quantity (NM) — stored as ``{prefix}``.
+    CQ.2 = Units (CWE) — code only from CQ.2.1, stored as ``{prefix}_units``.
+    """
+    return [
+        _s(f"{prefix}",       f"{label} quantity ({field_ref}.1, NM)"),
+        _s(f"{prefix}_units", f"{label} units code ({field_ref}.2.1, CWE)"),
+    ]
+
+
+def _pl_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
+    """PL (Person Location) — 11 component fields.
+
+    Each HD-typed sub-component (point_of_care, room, bed, facility, building,
+    floor, assigning_authority) is captured as its HD.1 namespace ID, matching
+    PV1.3 / NK1.3 single-component composite flattening precedent.
+    """
+    return [
+        _s(f"{prefix}_point_of_care",       f"{label} point of care ({field_ref}.1.1, HD; Table 0302)"),
+        _s(f"{prefix}_room",                f"{label} room ({field_ref}.2.1, HD; Table 0303)"),
+        _s(f"{prefix}_bed",                 f"{label} bed ({field_ref}.3.1, HD; Table 0304)"),
+        _s(f"{prefix}_facility",            f"{label} facility ({field_ref}.4.1, HD)"),
+        _s(f"{prefix}_status",              f"{label} location status ({field_ref}.5, IS; Table 0306)"),
+        _s(f"{prefix}_type",                f"{label} person location type ({field_ref}.6, IS; Table 0305)"),
+        _s(f"{prefix}_building",            f"{label} building ({field_ref}.7.1, HD; Table 0307)"),
+        _s(f"{prefix}_floor",               f"{label} floor ({field_ref}.8.1, HD; Table 0308)"),
+        _s(f"{prefix}_description",         f"{label} location description ({field_ref}.9, ST)"),
+        _s(f"{prefix}_comprehensive_id",    f"{label} comprehensive location identifier ({field_ref}.10.1, EI)"),
+        _s(f"{prefix}_assigning_authority", f"{label} assigning authority for location ({field_ref}.11.1, HD; Table 0363)"),
+    ]
+
+
 def _ei_array_schema(column_name: str, label: str, field_ref: str) -> list[StructField]:
     """EI (Entity Identifier) — repeating field as ArrayType(StructType([...]))."""
     ei_struct = StructType([
@@ -717,27 +770,15 @@ PV1_SCHEMA = StructType(
         _int_field("set_id",                       "Sequence number when multiple PV1 segments appear (PV1-1)"),
     ]
     + _cwe_schema("patient_class", "Patient class (CWE)", "PV1-2")
-    + [
-        _s("assigned_patient_location",    "Full assigned bed location composite (PV1-3), raw; use location_* fields"),
-        _s("location_point_of_care",       "Unit or nursing station, e.g. ICU, MED (PV1-3.1)"),
-        _s("location_room",                "Room number within the unit (PV1-3.2)"),
-        _s("location_bed",                 "Bed identifier within the room (PV1-3.3)"),
-        _s("location_facility",            "Facility where the patient is located (PV1-3.4)"),
-        _s("location_status",              "Bed status, e.g. C=Closed, H=Housekeeping, O=Occupied (PV1-3.5)"),
-        _s("location_type",                "Person location type, e.g. N=Nursing Unit, C=Clinic (PV1-3.9)"),
-    ]
+    + _pl_schema("assigned_patient_location", "Assigned patient location (PL)", "PV1-3")
     + _cwe_schema("admission_type", "Admission type (CWE)", "PV1-4")
     + _cx_schema("preadmit_number", "Pre-admission number", "PV1-5")
-    + [
-        _s("prior_patient_location",       "Prior bed location before transfer (PV1-6), raw composite"),
-    ]
+    + _pl_schema("prior_patient_location", "Prior patient location (PL)", "PV1-6")
     + _xcn_array_schema("attending_doctor", "Attending physician (XCN, repeatable per spec)", "PV1-7")
     + _xcn_array_schema("referring_doctor", "Referring physician (XCN, repeatable per spec)", "PV1-8")
     + _xcn_array_schema("consulting_doctor", "Consulting physician (XCN, repeatable per spec)", "PV1-9")
     + _cwe_schema("hospital_service", "Hospital service (CWE)", "PV1-10")
-    + [
-        _s("temporary_location",           "Temporary bed/location during a transfer (PV1-11)"),
-    ]
+    + _pl_schema("temporary_location", "Temporary location (PL)", "PV1-11")
     + _cwe_schema("preadmit_test_indicator", "Pre-admit test indicator (CWE; e.g. Y/N)", "PV1-12")
     + _cwe_schema("readmission_indicator", "Re-admission indicator (CWE; e.g. R=Readmission)", "PV1-13")
     + _cwe_schema("admit_source", "Admit source (CWE)", "PV1-14")
@@ -780,9 +821,9 @@ PV1_SCHEMA = StructType(
     + _cwe_schema("servicing_facility", "Servicing facility (CWE)", "PV1-39")
     + _cwe_schema("bed_status", "Bed status (CWE, deprecated in v2.6)", "PV1-40")
     + _cwe_schema("account_status", "Account status (CWE)", "PV1-41")
+    + _pl_schema("pending_location", "Pending location (PL)", "PV1-42")
+    + _pl_schema("prior_temporary_location", "Prior temporary location (PL)", "PV1-43")
     + [
-        _s("pending_location",             "Bed reserved for a pending admission or transfer (PV1-42)"),
-        _s("prior_temporary_location",     "Prior temporary location before the current transfer (PV1-43)"),
         _ts("admit_datetime",              "Date/time of admission parsed to timestamp (PV1-44)"),
         _ts("discharge_datetime",          "Date/time of discharge parsed to timestamp (PV1-45)"),
         _s("current_patient_balance",      "Current outstanding patient balance (PV1-46)"),
@@ -988,7 +1029,9 @@ DG1_SCHEMA = StructType(
     + _cwe_schema("outlier_type", "Outlier type", "DG1-11")
     + [
         _int_field("outlier_days",                         "Number of outlier days beyond the DRG length-of-stay threshold (DG1-12)"),
-        _s("outlier_cost",                         "Outlier cost amount beyond the DRG cost threshold (DG1-13)"),
+    ]
+    + _cp_schema("outlier_cost", "Outlier cost amount beyond the DRG cost threshold (CP, deprecated)", "DG1-13")
+    + [
         _s("grouper_version_and_type",             "Version and type of the DRG grouper software (DG1-14)"),
         _int_field("diagnosis_priority",                   "Priority rank of this diagnosis; 1=principal diagnosis (DG1-15)"),
     ]
@@ -1139,9 +1182,7 @@ PD1_SCHEMA = StructType(
 
 PV2_SCHEMA = StructType(
     _METADATA_FIELDS
-    + [
-        _s("prior_pending_location",                   "Prior pending transfer location (PV2-1)"),
-    ]
+    + _pl_schema("prior_pending_location", "Prior pending transfer location (PL)", "PV2-1")
     + _cwe_schema("accommodation_code", "Accommodation code", "PV2-2")
     + _cwe_schema("admit_reason", "Admit reason", "PV2-3")
     + _cwe_schema("transfer_reason", "Transfer reason", "PV2-4")
@@ -1363,9 +1404,7 @@ ORC_SCHEMA = StructType(
     + _xcn_schema("entered_by", "Person who entered the order", "ORC-10")
     + _xcn_schema("verified_by", "Person who verified the order", "ORC-11")
     + _xcn_schema("ordering_provider", "Ordering provider", "ORC-12")
-    + [
-        _s("enterers_location",                        "Location where order was entered (ORC-13)"),
-    ]
+    + _pl_schema("enterers_location", "Location where order was entered (PL)", "ORC-13")
     + _xtn_array_schema("call_back_phone", "Callback phone (XTN, repeatable per spec)", "ORC-14")
     + [
         _ts("order_effective_datetime",                "Order effective date/time (ORC-15)"),
@@ -1538,12 +1577,14 @@ IN1_SCHEMA = StructType(
     + _cwe_schema("company_plan_code", "Company plan code (CWE)", "IN1-35")
     + [
         _s("policy_number",                    "Policy number (IN1-36)"),
-        _s("policy_deductible",                "Policy deductible amount (IN1-37.1)"),
-        _s("policy_limit_amount",              "Policy limit amount (IN1-38.1)"),
-        _int_field("policy_limit_days",                "Policy limit in days (IN1-39)"),
-        _s("room_rate_semi_private",           "Semi-private room rate (IN1-40.1, deprecated)"),
-        _s("room_rate_private",                "Private room rate (IN1-41.1, deprecated)"),
     ]
+    + _cp_schema("policy_deductible", "Policy deductible amount (CP)", "IN1-37")
+    + _cp_schema("policy_limit_amount", "Policy limit amount (CP)", "IN1-38")
+    + [
+        _int_field("policy_limit_days",                "Policy limit in days (IN1-39)"),
+    ]
+    + _cp_schema("room_rate_semi_private", "Semi-private room rate (CP, deprecated)", "IN1-40")
+    + _cp_schema("room_rate_private", "Private room rate (CP, deprecated)", "IN1-41")
     + _cwe_schema("insureds_employment_status", "Insured's employment status", "IN1-42")
     + _cwe_schema("insureds_administrative_sex", "Insured's administrative sex", "IN1-43")
     + _xad_array_schema("insureds_employers_address", "Insured's employer address (XAD, repeatable per spec)", "IN1-44")
@@ -1610,8 +1651,8 @@ GT1_SCHEMA = StructType(
         _s("guarantor_death_flag",                 "Guarantor death flag Y/N (GT1-25)"),
     ]
     + _cwe_schema("guarantor_charge_adjustment_code", "Guarantor charge adjustment", "GT1-26")
+    + _cp_schema("guarantor_household_annual_income", "Guarantor household annual income (CP)", "GT1-27")
     + [
-        _s("guarantor_household_annual_income",    "Household annual income (GT1-27.1)"),
         _int_field("guarantor_household_size",             "Household size (GT1-28)"),
     ]
     + _cx_array_schema("guarantor_employer_id_number", "Guarantor employer ID (CX, repeatable per spec)", "GT1-29")
@@ -1669,7 +1710,8 @@ FT1_SCHEMA = StructType(
         _pk_int_field("set_id",                              "Sequence number for this FT1 segment within the message (FT1-1)"),
         _s("transaction_id",                          "Unique transaction identifier (FT1-2)"),
         _s("transaction_batch_id",                    "Batch identifier (FT1-3)"),
-        _s("transaction_date",                        "Transaction date/time range start (FT1-4.1)"),
+        _ts("transaction_date_start",                 "Transaction date/time range start (FT1-4.1, DR)"),
+        _ts("transaction_date_end",                   "Transaction date/time range end (FT1-4.2, DR)"),
         _ts("transaction_posting_date",               "Posting date/time (FT1-5)"),
     ]
     + _cwe_schema("transaction_type", "Transaction type (CWE; e.g. CG=Charge, CR=Credit, PA=Payment, AJ=Adjustment)", "FT1-6")
@@ -1678,23 +1720,19 @@ FT1_SCHEMA = StructType(
         _s("transaction_description",                 "Transaction description (FT1-8, deprecated)"),
         _s("transaction_description_alt",             "Alternate transaction description (FT1-9, deprecated)"),
         _int_field("transaction_quantity",                    "Transaction quantity (FT1-10)"),
-        _s("transaction_amount_extended",             "Extended amount: quantity x unit price (FT1-11.1)"),
-        _s("transaction_amount_unit",                 "Unit price (FT1-12.1)"),
     ]
+    + _cp_schema("transaction_amount_extended", "Extended amount: quantity x unit price (CP)", "FT1-11")
+    + _cp_schema("transaction_amount_unit", "Unit price (CP)", "FT1-12")
     + _cwe_schema("department_code", "Department", "FT1-13")
     + _cwe_schema("insurance_plan_id", "Insurance plan / health plan ID (CWE)", "FT1-14")
-    + [
-        _s("insurance_amount",                        "Insurance amount (FT1-15.1)"),
-        _s("assigned_patient_location",               "Patient location (FT1-16)"),
-    ]
+    + _cp_schema("insurance_amount", "Insurance amount (CP)", "FT1-15")
+    + _pl_schema("assigned_patient_location", "Assigned patient location (PL)", "FT1-16")
     + _cwe_schema("fee_schedule", "Fee schedule (CWE)", "FT1-17")
     + _cwe_schema("patient_type", "Patient type (CWE)", "FT1-18")
     + _cwe_array_schema("diagnosis_code", "Diagnosis (CWE, repeatable per spec)", "FT1-19")
     + _xcn_array_schema("performed_by", "Performed by (XCN, repeatable per spec)", "FT1-20")
     + _xcn_array_schema("ordered_by", "Ordered by (XCN, repeatable per spec)", "FT1-21")
-    + [
-        _s("unit_cost",                               "Unit cost (FT1-22.1)"),
-    ]
+    + _cp_schema("unit_cost", "Unit cost (CP)", "FT1-22")
     + _ei_schema("filler_order_number", "Filler order number (EI)", "FT1-23")
     + _xcn_array_schema("entered_by", "Entered by (XCN, repeatable per spec)", "FT1-24")
     + _cwe_schema("ft1_procedure_code", "Procedure code", "FT1-25")
@@ -1702,28 +1740,26 @@ FT1_SCHEMA = StructType(
     + _cwe_schema("advanced_beneficiary_notice_code", "Advanced beneficiary notice (ABN) code (CWE)", "FT1-27")
     + _cwe_schema("medically_necessary_dup_proc_reason", "Medically-necessary duplicate procedure reason (CWE)", "FT1-28")
     + _cwe_schema("ndc_code", "NDC code (CWE)", "FT1-29")
+    + _cx_schema("payment_reference_id", "Payment reference ID (CX)", "FT1-30")
     + [
-        _s("payment_reference_id",                    "Payment reference (FT1-30.1)"),
-        _s("transaction_reference_key",               "Transaction reference key (FT1-31)"),
-        _s("performing_facility",                     "Performing facility (FT1-32.1, v2.6+)"),
-        _s("ordering_facility",                       "Ordering facility (FT1-33.1, v2.6+)"),
+        _s_array("transaction_reference_key",         "Transaction reference key (FT1-31, SI; repeatable per spec — array of FT1-1 set-IDs linking payment to corresponding charges)"),
     ]
+    + _xon_array_schema("performing_facility", "Performing facility (XON, repeatable per spec, v2.6+)", "FT1-32")
+    + _xon_schema("ordering_facility", "Ordering facility (XON, v2.6+)", "FT1-33")
     + _cwe_schema("item_number", "Item number (CWE, v2.6+)", "FT1-34")
     + [
         _s("model_number",                            "Model number (FT1-35, v2.6+)"),
     ]
     + _cwe_array_schema("special_processing_code", "Special processing code (CWE, repeatable per spec, v2.6+)", "FT1-36")
     + _cwe_schema("clinic_code", "Clinic code (CWE, v2.6+)", "FT1-37")
-    + [
-        _s("referral_number",                         "Referral number (FT1-38.1, v2.6+)"),
-        _s("authorization_number",                    "Authorization number (FT1-39.1, v2.6+)"),
-    ]
+    + _cx_schema("referral_number", "Referral number (CX, v2.6+)", "FT1-38")
+    + _cx_schema("authorization_number", "Authorization number (CX, v2.6+)", "FT1-39")
     + _cwe_schema("service_provider_taxonomy_code", "Service provider taxonomy code (CWE, v2.6+)", "FT1-40")
     + _cwe_schema("revenue_code", "Revenue code (CWE, v2.6+)", "FT1-41")
     + [
         _s("prescription_number",                     "Prescription number (FT1-42, v2.6+)"),
-        _s("ndc_qty_and_uom",                         "NDC quantity and unit of measure (FT1-43, v2.6+)"),
     ]
+    + _cq_schema("ndc_qty_and_uom", "NDC quantity and unit of measure (CQ, v2.6+)", "FT1-43")
     + _cwe_schema("dme_certificate_of_medical_necessity_transmission_code", "DME certificate of medical necessity transmission code (CWE, v2.9+)", "FT1-44")
     + _cwe_schema("dme_certification_type_code", "DME certification type code (CWE, v2.9+)", "FT1-45")
     + [
@@ -1818,20 +1854,14 @@ SCH_SCHEMA = StructType(
     + _xcn_array_schema("placer_contact_person", "Placer contact person (XCN, repeatable per spec)", "SCH-12")
     + _xtn_schema("placer_contact_phone_number", "Placer contact phone", "SCH-13")
     + _xad_array_schema("placer_contact_address", "Placer contact address (XAD, repeatable per spec)", "SCH-14")
-    + [
-        _s("placer_contact_location",      "Placer contact location (SCH-15)"),
-    ]
+    + _pl_schema("placer_contact_location", "Placer contact location (PL)", "SCH-15")
     + _xcn_array_schema("filler_contact_person", "Filler contact person (XCN, repeatable per spec)", "SCH-16")
     + _xtn_schema("filler_contact_phone_number", "Filler contact phone", "SCH-17")
     + _xad_array_schema("filler_contact_address", "Filler contact address (XAD, repeatable per spec)", "SCH-18")
-    + [
-        _s("filler_contact_location",      "Filler contact location (SCH-19)"),
-    ]
+    + _pl_schema("filler_contact_location", "Filler contact location (PL)", "SCH-19")
     + _xcn_array_schema("entered_by_person", "Person who entered the schedule (XCN, repeatable per spec)", "SCH-20")
     + _xtn_array_schema("entered_by_phone_number", "Entered by phone (XTN, repeatable per spec)", "SCH-21")
-    + [
-        _s("entered_by_location",          "Entered by location (SCH-22)"),
-    ]
+    + _pl_schema("entered_by_location", "Entered by location (PL)", "SCH-22")
     + _ei_schema("parent_placer_appointment_id", "Parent placer appointment ID (EI)", "SCH-23")
     + _ei_schema("parent_filler_appointment_id", "Parent filler appointment ID (EI)", "SCH-24")
     + _cwe_schema("filler_status_code", "Filler status code", "SCH-25")

@@ -18,8 +18,8 @@ class TestPV1Extraction:
         msg = parse_first(load_sample("sample_adt.hl7"))
         row = extract_segment(msg, "PV1", _extract_pv1)
         assert row["patient_class"] == "I"
-        assert row["location_point_of_care"] == "MED"
-        assert row["location_room"] == "101"
+        assert row["assigned_patient_location_point_of_care"] == "MED"
+        assert row["assigned_patient_location_room"] == "101"
         assert row["attending_doctor"][0]["id"] == "DOC001"
         assert row["attending_doctor"][0]["family_name"] == "Smith"
 
@@ -27,7 +27,7 @@ class TestPV1Extraction:
         msg = parse_first(load_sample("sample_adt_comprehensive.hl7"))
         row = extract_segment(msg, "PV1", _extract_pv1)
         assert row["patient_class"] == "I"
-        assert row["location_point_of_care"] == "ICU"
+        assert row["assigned_patient_location_point_of_care"] == "ICU"
         assert row["hospital_service"] == "CCU"
         assert row["visit_number"] == "VN20240301001"
         assert row["admit_datetime"] is not None
@@ -42,7 +42,7 @@ class TestPV1MissingFields:
         row = _extract_pv1(msg.get_segment("PV1"))
         assert row["set_id"] == 1
         assert row["patient_class"] == "I"
-        assert row["location_point_of_care"] is None
+        assert row["assigned_patient_location_point_of_care"] is None
         assert row["attending_doctor"] is None
         assert row["hospital_service"] is None
         assert row["admit_datetime"] is None
@@ -56,6 +56,6 @@ class TestPV1MissingFields:
         )
         row = _extract_pv1(msg.get_segment("PV1"))
         assert row["patient_class"] == "O"
-        assert row["location_point_of_care"] == "CLINIC"
-        assert row["location_room"] == "200"
-        assert row["location_bed"] == "A"
+        assert row["assigned_patient_location_point_of_care"] == "CLINIC"
+        assert row["assigned_patient_location_room"] == "200"
+        assert row["assigned_patient_location_bed"] == "A"

@@ -260,7 +260,7 @@ Source: [Caristix HL7v2.5.1 PV1](https://hl7-definition.caristix.com/v2/HL7v2.5.
 |---|---|---|---|---|---|---|
 | PV1.1 | Set ID - PV1 | SI | O | 4 | 1 | Sequence number |
 | PV1.2 | Patient Class | IS | R | 1 | 1 | `I` (inpatient), `O` (outpatient), `E` (emergency), `P` (preadmit), `R` (recurring), `B` (obstetrics) (Table 0004) |
-| PV1.3 | Assigned Patient Location | PL | O | 80 | 1 | Point of care (comp 1), room (comp 2), bed (comp 3), facility (comp 4) |
+| PV1.3 | Assigned Patient Location | PL | O | 80 | 1 | All 11 PL components flattened via `_pl_fields()` (point_of_care, room, bed, facility, status, type, building, floor, description, comprehensive_id, assigning_authority) |
 | PV1.4 | Admission Type | IS | O | 2 | 1 | Admission type (Table 0007) |
 | PV1.5 | Preadmit Number | CX | O | 250 | 1 | Pre-admission identifier |
 | PV1.6 | Prior Patient Location | PL | O | 80 | 1 | Previous location |
@@ -820,7 +820,7 @@ Source: [Caristix HL7v2.5.1 GT1](https://hl7-definition.caristix.com/v2/HL7v2.5.
 | GT1.56 | Guarantor Birth Place | ST | O | 250 | 1 | Birth place |
 | GT1.57 | VIP Indicator | IS | O | 2 | 1 | VIP indicator (Table 0099) |
 
-### FT1 — Financial Transaction (31 fields)
+### FT1 — Financial Transaction (56 fields: 1–31 baseline, 32–43 v2.6+, 44–56 v2.9+)
 
 Source: [Caristix HL7v2.5.1 FT1](https://hl7-definition.caristix.com/v2/HL7v2.5.1/Segments/FT1)
 
@@ -836,8 +836,8 @@ Source: [Caristix HL7v2.5.1 FT1](https://hl7-definition.caristix.com/v2/HL7v2.5.
 | FT1.8 | Transaction Description | ST | B | 40 | 1 | Deprecated — transaction description |
 | FT1.9 | Transaction Description - Alt | ST | B | 40 | 1 | Deprecated — alternate description |
 | FT1.10 | Transaction Quantity | NM | O | 6 | 1 | Quantity |
-| FT1.11 | Transaction Amount - Extended | CP | O | 12 | 1 | Extended amount (quantity × unit price) |
-| FT1.12 | Transaction Amount - Unit | CP | O | 12 | 1 | Unit price |
+| FT1.11 | Transaction Amount - Extended | CP | O | 12 | 1 | Extended amount (quantity × unit price) — all 6 CP components flattened |
+| FT1.12 | Transaction Amount - Unit | CP | O | 12 | 1 | Unit price — all 6 CP components flattened |
 | FT1.13 | Department Code | CE | O | 250 | 1 | Department (Table 0049) |
 | FT1.14 | Insurance Plan ID | CE | O | 250 | 1 | Insurance plan (Table 0072) |
 | FT1.15 | Insurance Amount | CP | O | 12 | 1 | Insurance amount |
@@ -855,8 +855,21 @@ Source: [Caristix HL7v2.5.1 FT1](https://hl7-definition.caristix.com/v2/HL7v2.5.
 | FT1.27 | Advanced Beneficiary Notice Code | CE | O | 250 | 1 | ABN code (Table 0339) |
 | FT1.28 | Medically Necessary Duplicate Procedure Reason | CWE | O | 250 | 1 | Duplicate procedure reason (Table 0476) |
 | FT1.29 | NDC Code | CNE | O | 250 | 1 | National Drug Code (Table 0549) |
-| FT1.30 | Payment Reference ID | CX | O | 250 | 1 | Payment reference |
-| FT1.31 | Transaction Reference Key | SI | O | 4 | * | Transaction reference key |
+| FT1.30 | Payment Reference ID | CX | O | 250 | 1 | Payment reference — all 12 CX components flattened (ID + HD-decomposed assigning authority/facility) |
+| FT1.31 | Transaction Reference Key | SI | O | 4 | * | Repeating SI; stored as `ARRAY<STRING>` of FT1-1 set-IDs linking payment to corresponding charges |
+| FT1.32 | Performing Facility | XON | O | 250 | * | v2.6+. Repeating XON; stored as `ARRAY<STRUCT>` with all XON components per repetition |
+| FT1.33 | Ordering Facility | XON | O | 250 | 1 | v2.6+. All XON components flattened |
+| FT1.34 | Item Number | CWE | O | 250 | 1 | v2.6+. All CWE components flattened |
+| FT1.35 | Model Number | ST | O | 250 | 1 | v2.6+ |
+| FT1.36 | Special Processing Code | CWE | O | 250 | * | v2.6+. Repeating CWE array |
+| FT1.37 | Clinic Code | CWE | O | 250 | 1 | v2.6+. All CWE components flattened |
+| FT1.38 | Referral Number | CX | O | 250 | 1 | v2.6+. All 12 CX components flattened |
+| FT1.39 | Authorization Number | CX | O | 250 | 1 | v2.6+. All 12 CX components flattened |
+| FT1.40 | Service Provider Taxonomy Code | CWE | O | 250 | 1 | v2.6+. All CWE components flattened |
+| FT1.41 | Revenue Code | CWE | O | 250 | 1 | v2.6+. All CWE components flattened (Table 0456) |
+| FT1.42 | Prescription Number | ST | O | 20 | 1 | v2.6+ |
+| FT1.43 | NDC Qty and UoM | CQ | O | 0 | 1 | v2.6+. CQ.1 (NM quantity) + CQ.2 (CWE units) flattened |
+| FT1.44–FT1.56 | DME-related fields | various | O | – | – | v2.9+. Captured for forward compatibility; see `hl7_v2_schemas.py` for individual columns |
 
 ### RXA — Pharmacy/Treatment Administration (26 fields)
 
@@ -1189,13 +1202,13 @@ Two extraction strategies are used depending on the HL7 cardinality:
 | HD | Hierarchic Designator | namespace ID ^ universal ID ^ universal ID type | ALL 3: namespace_id, universal_id, universal_id_type |
 | EI | Entity Identifier | entity ID ^ namespace ID ^ universal ID ^ universal ID type | ALL 4: entity_id, namespace_id, universal_id, universal_id_type |
 | EIP | Entity Identifier Pair | placer assigned identifier ^ filler assigned identifier | Comp 1 (placer ID) |
-| PL | Person Location | point of care ^ room ^ bed ^ facility ^ location status ^ person location type ^ building ^ floor | Components: point_of_care, room, bed, facility, status, type |
+| PL | Person Location | point of care (HD) ^ room (HD) ^ bed (HD) ^ facility (HD) ^ location status (IS) ^ person location type (IS) ^ building (HD) ^ floor (HD) ^ location description (ST) ^ comprehensive location id (EI) ^ assigning authority (HD) | ALL 11 components flattened via `_pl_fields()` / `_pl_schema()`: point_of_care, room, bed, facility, status, type, building, floor, description, comprehensive_id, assigning_authority. Each HD sub-component stores HD.1 namespace ID. |
 | MSG | Message Type | message code ^ trigger event ^ message structure | Comp 1 (message code), Comp 2 (trigger event) |
 | PT | Processing Type | processing ID ^ processing mode | Comp 1 (processing ID) |
 | VID | Version Identifier | version ID ^ internationalization code ^ international version ID | Comp 1 (version ID) |
 | DR | Date/Time Range | range start datetime ^ range end datetime | Comp 1 (start), Comp 2 (end) |
-| CQ | Composite Quantity with Units | quantity ^ units | Comp 1 (quantity), Comp 2 (units) |
-| CP | Composite Price | price ^ price type ^ from value ^ to value ^ range units ^ range type | Comp 1 (price) |
+| CQ | Composite Quantity with Units | quantity (NM) ^ units (CWE) | ALL 2 components flattened via `_cq_fields()` / `_cq_schema()`: `{prefix}` (CQ.1 NM quantity), `{prefix}_units` (CQ.2.1 CWE code). |
+| CP | Composite Price | price (MO) ^ price type (ID) ^ from value (NM) ^ to value (NM) ^ range units (CWE) ^ range type (ID) | ALL 6 components flattened via `_cp_fields()` / `_cp_schema()` (7 columns including the MO currency sub-component): `{prefix}` (price quantity, CP.1.1), `{prefix}_currency` (ISO 4217 from CP.1.2), `{prefix}_price_type`, `{prefix}_from_value`, `{prefix}_to_value`, `{prefix}_range_units` (CWE code), `{prefix}_range_type`. |
 | FC | Financial Class | financial class code ^ effective date | Comp 1 (financial class) |
 | AUI | Authorization Information | authorization number ^ date ^ source | Comp 1 (authorization number) |
 | JCC | Job Code/Class | job code ^ job class | Comp 1 (job code), Comp 2 (job class) |

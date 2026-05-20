@@ -244,6 +244,76 @@ def _ei_fields(
     }
 
 
+def _cp_fields(seg: HL7Segment, field_n: int, prefix: str) -> dict:
+    """CP (Composite Price) — 6 components, with MO sub-components on CP.1.
+
+    Components: Price (MO), Price Type (ID, table 0205), From Value (NM),
+    To Value (NM), Range Units (CWE — code only), Range Type (ID, table 0298).
+    MO has 2 sub-components: 1=quantity, 2=ISO 4217 denomination code.
+    """
+    def gc(comp):
+        return _v(seg.get_component(field_n, comp))
+
+    def gsc(comp, sub):
+        return _v(seg.get_sub_component(field_n, comp, sub))
+
+    return {
+        f"{prefix}": gsc(1, 1) or gc(1),
+        f"{prefix}_currency": gsc(1, 2),
+        f"{prefix}_price_type": gc(2),
+        f"{prefix}_from_value": gc(3),
+        f"{prefix}_to_value": gc(4),
+        f"{prefix}_range_units": gsc(5, 1) or gc(5),
+        f"{prefix}_range_type": gc(6),
+    }
+
+
+def _cq_fields(seg: HL7Segment, field_n: int, prefix: str) -> dict:
+    """CQ (Composite Quantity with Units) — 2 components.
+
+    CQ.1 = Quantity (NM) — stored as ``{prefix}`` (raw string; downstream casts to NUMERIC).
+    CQ.2 = Units (CWE) — code only at CQ.2.1, stored as ``{prefix}_units``.
+    """
+    def gc(comp):
+        return _v(seg.get_component(field_n, comp))
+
+    def gsc(comp, sub):
+        return _v(seg.get_sub_component(field_n, comp, sub))
+
+    return {
+        f"{prefix}": gc(1),
+        f"{prefix}_units": gsc(2, 1) or gc(2),
+    }
+
+
+def _pl_fields(seg: HL7Segment, field_n: int, prefix: str) -> dict:
+    """PL (Person Location) — 11 components.
+
+    Each HD sub-component (point_of_care, room, bed, facility, building, floor,
+    assigning_authority) is captured as its HD.1 namespace ID, matching the
+    precedent set by PV1.3 / NK1.3 single-component composite flattening.
+    """
+    def gc(comp):
+        return _v(seg.get_component(field_n, comp))
+
+    def gsc(comp, sub):
+        return _v(seg.get_sub_component(field_n, comp, sub))
+
+    return {
+        f"{prefix}_point_of_care": gsc(1, 1) or gc(1),
+        f"{prefix}_room": gsc(2, 1) or gc(2),
+        f"{prefix}_bed": gsc(3, 1) or gc(3),
+        f"{prefix}_facility": gsc(4, 1) or gc(4),
+        f"{prefix}_status": gc(5),
+        f"{prefix}_type": gc(6),
+        f"{prefix}_building": gsc(7, 1) or gc(7),
+        f"{prefix}_floor": gsc(8, 1) or gc(8),
+        f"{prefix}_description": gc(9),
+        f"{prefix}_comprehensive_id": gsc(10, 1) or gc(10),
+        f"{prefix}_assigning_authority": gsc(11, 1) or gc(11),
+    }
+
+
 def _cwe_array_fields(
     seg: HL7Segment, field_n: int, column_name: str
 ) -> dict:
