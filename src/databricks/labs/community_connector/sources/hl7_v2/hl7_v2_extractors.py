@@ -469,17 +469,17 @@ def _extract_pd1(seg: HL7Segment) -> dict:
         **_cx_array_fields(seg, 10, "duplicate_patient"),
         **_cwe_fields(seg, 11, "publicity_code", repeating=False),
         "protection_indicator": _v(seg.get_field(12)),
-        "protection_indicator_effective_date": _v(seg.get_field(13)),
+        "protection_indicator_effective_date": _parse_dtm(seg.get_field(13)),
         **_xon_array_fields(seg, 14, "place_of_worship"),
         **_cwe_array_fields(seg, 15, "advance_directive_code"),
         **_cwe_fields(seg, 16, "immunization_registry_status", repeating=False),
-        "immunization_registry_status_effective_date": _v(seg.get_field(17)),
-        "publicity_code_effective_date": _v(seg.get_field(18)),
+        "immunization_registry_status_effective_date": _parse_dtm(seg.get_field(17)),
+        "publicity_code_effective_date": _parse_dtm(seg.get_field(18)),
         **_cwe_fields(seg, 19, "military_branch", repeating=False),
         **_cwe_fields(seg, 20, "military_rank_grade", repeating=False),
         **_cwe_fields(seg, 21, "military_status", repeating=False),
-        "advance_directive_last_verified_date": _v(seg.get_field(22)),
-        "retirement_date": _v(seg.get_field(23)),
+        "advance_directive_last_verified_date": _parse_dtm(seg.get_field(22)),
+        "retirement_date": _parse_dtm(seg.get_field(23)),
     }
 
 

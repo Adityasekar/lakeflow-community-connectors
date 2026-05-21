@@ -1381,21 +1381,21 @@ PD1_SCHEMA = StructType(
     + _cwe_schema("publicity_code", "Publicity code", "PD1-11")
     + [
         _s("protection_indicator",                     "Protection indicator Y/N (PD1-12); if Y, patient info is restricted"),
-        _s("protection_indicator_effective_date",      "Date the protection indicator became effective (PD1-13)"),
+        _ts("protection_indicator_effective_date",     "Date the protection indicator became effective (PD1-13, DT)"),
     ]
     + _xon_array_schema("place_of_worship", "Place of worship (XON, repeatable per spec)", "PD1-14")
     + _cwe_array_schema("advance_directive_code", "Advance directive (CWE, repeatable per spec)", "PD1-15")
     + _cwe_schema("immunization_registry_status", "Immunization registry status (CWE)", "PD1-16")
     + [
-        _s("immunization_registry_status_effective_date", "Immunization registry status effective date (PD1-17)"),
-        _s("publicity_code_effective_date",            "Publicity code effective date (PD1-18)"),
+        _ts("immunization_registry_status_effective_date", "Immunization registry status effective date (PD1-17, DT)"),
+        _ts("publicity_code_effective_date",           "Publicity code effective date (PD1-18, DT)"),
     ]
     + _cwe_schema("military_branch", "Military branch (CWE)", "PD1-19")
     + _cwe_schema("military_rank_grade", "Military rank/grade (CWE)", "PD1-20")
     + _cwe_schema("military_status", "Military status (CWE)", "PD1-21")
     + [
-        _s("advance_directive_last_verified_date",     "Date advance directive was last verified (PD1-22, v2.8+)"),
-        _s("retirement_date",                          "Date the patient retired (PD1-23, v2.9+)"),
+        _ts("advance_directive_last_verified_date",    "Date advance directive was last verified (PD1-22, DT, v2.8+)"),
+        _ts("retirement_date",                         "Date the patient retired (PD1-23, DT, v2.9+)"),
     ]
 )
 
