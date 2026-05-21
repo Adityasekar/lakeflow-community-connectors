@@ -882,7 +882,8 @@ def _extract_ft1(seg: HL7Segment) -> dict:
         **_cwe_fields(seg, 41, "revenue_code", repeating=False),
         "prescription_number": _v(seg.get_field(42)),
         **_cq_fields(seg, 43, "ndc_qty_and_uom"),
-        **_cwe_fields(seg, 44, "dme_certificate_of_medical_necessity_transmission_code", repeating=False),
+        **_cwe_fields(  # dme_certificate_of_medical_necessity_transmission_code
+            seg, 44, "dme_certificate_of_medical_necessity_transmission_code", repeating=False),
         **_cwe_fields(seg, 45, "dme_certification_type_code", repeating=False),
         "dme_duration_value": _v(seg.get_field(46)),
         "dme_certification_revision_date": _v(seg.get_field(47)),
