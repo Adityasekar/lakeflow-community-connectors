@@ -142,6 +142,42 @@ class TestPIDArrayPromotion:
         assert phones[1]["equipment_type"] == "CP"
 
 
+class TestPIDExternalId:
+    """PID-2 (patient_external_id) and PID-4 (alternate_patient_id) are CX type.
+    Both were previously stored as raw strings; they must now be decomposed."""
+
+    def test_pid2_external_id_cx_struct(self):
+        # CX: comp1=id, comp3=check_digit_scheme, comp4=assigning_authority(HD.1), comp5=type_code
+        msg = parse_message(
+            "MSH|^~\\&|A|B|C|D|20240101||ADT^A01|1|P|2.5\r"
+            "PID|1|EXT001^^M11^EXT_SYS^PI|||Doe^John"
+        )
+        row = _extract_pid(msg.get_segment("PID"))
+        assert row["patient_external_id"] == "EXT001"
+        assert row["patient_external_id_check_digit_scheme"] == "M11"
+        assert row["patient_external_id_assigning_authority"] == "EXT_SYS"
+        assert row["patient_external_id_type_code"] == "PI"
+
+    def test_pid4_alternate_id_cx_struct(self):
+        msg = parse_message(
+            "MSH|^~\\&|A|B|C|D|20240101||ADT^A01|1|P|2.5\r"
+            "PID|1|||ALT999^^M11^ALT_SYS^AN||Doe^John"
+        )
+        row = _extract_pid(msg.get_segment("PID"))
+        assert row["alternate_patient_id"] == "ALT999"
+        assert row["alternate_patient_id_assigning_authority"] == "ALT_SYS"
+        assert row["alternate_patient_id_type_code"] == "AN"
+
+    def test_pid2_absent_yields_none(self):
+        msg = parse_message(
+            "MSH|^~\\&|A|B|C|D|20240101||ADT^A01|1|P|2.5\r"
+            "PID|1"
+        )
+        row = _extract_pid(msg.get_segment("PID"))
+        assert row["patient_external_id"] is None
+        assert row["alternate_patient_id"] is None
+
+
 class TestPIDEdgeCases:
     def test_pid_with_repetition_in_name(self):
         msg = parse_message(

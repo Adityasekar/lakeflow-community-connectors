@@ -149,9 +149,9 @@ def _extract_msh(seg: HL7Segment) -> dict:
 def _extract_pid(seg: HL7Segment) -> dict:
     return {
         "set_id": _i(seg.get_field(1)),
-        "patient_external_id": _v(seg.get_field(2)),
+        **_cx_fields(seg, 2, "patient_external_id", repeating=False),
         **_cx_array_fields(seg, 3, "patient_id"),
-        "alternate_patient_id": _v(seg.get_first_repetition(4)),
+        **_cx_fields(seg, 4, "alternate_patient_id", repeating=False),
         **_xpn_array_fields(seg, 5, "patient_names"),
         **_xpn_array_fields(seg, 6, "mothers_maiden_names"),
         "date_of_birth": _parse_dtm(seg.get_field(7)),

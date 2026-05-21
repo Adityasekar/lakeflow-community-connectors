@@ -2056,9 +2056,9 @@ def register_lakeflow_source(spark):
     def _extract_pid(seg: HL7Segment) -> dict:
         return {
             "set_id": _i(seg.get_field(1)),
-            "patient_external_id": _v(seg.get_field(2)),
+            **_cx_fields(seg, 2, "patient_external_id", repeating=False),
             **_cx_array_fields(seg, 3, "patient_id"),
-            "alternate_patient_id": _v(seg.get_first_repetition(4)),
+            **_cx_fields(seg, 4, "alternate_patient_id", repeating=False),
             **_xpn_array_fields(seg, 5, "patient_names"),
             **_xpn_array_fields(seg, 6, "mothers_maiden_names"),
             "date_of_birth": _parse_dtm(seg.get_field(7)),
@@ -3890,9 +3890,9 @@ def register_lakeflow_source(spark):
         _METADATA_FIELDS
         + [
             _int_field("set_id",                        "Sequence number when multiple PID segments appear in a message (PID-1)"),
-            _s("patient_external_id",           "External patient ID from a prior system (PID-2, deprecated in v2.7)"),
+            *_cx_schema("patient_external_id", "External patient ID from a prior system (CX, PID-2, deprecated in v2.7)", "PID-2"),
             *_cx_array_schema("patient_id", "Patient identifier list (CX, repeatable per spec)", "PID-3"),
-            _s("alternate_patient_id",          "Alternate patient identifier from a prior system (PID-4, deprecated in v2.7)"),
+            *_cx_schema("alternate_patient_id", "Alternate patient identifier (CX, PID-4, deprecated in v2.7)", "PID-4"),
             *_xpn_array_schema("patient_names", "Patient names", "PID-5"),
             *_xpn_array_schema("mothers_maiden_names", "Mother's maiden names", "PID-6"),
             _ts("date_of_birth",                "Date of birth parsed to timestamp (PID-7)"),
