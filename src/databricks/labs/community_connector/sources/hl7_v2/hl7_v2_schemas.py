@@ -1098,7 +1098,7 @@ OBR_SCHEMA = StructType(
     + [
         _s("quantity_timing",                     "Quantity and timing of the order (OBR-27, deprecated in v2.7)"),
     ]
-    + _xcn_schema("result_copies_to", "Result copy-to provider", "OBR-28")
+    + _xcn_array_schema("result_copies_to", "Result copy-to provider (XCN, repeatable per spec)", "OBR-28")
     + _eip_array_schema("parent_placer_order_number", "Placer order number of the parent order (EIP, repeatable per spec)", "OBR-29")
     + [
         _s("transportation_mode",                  "Specimen transportation mode code (OBR-30)"),
@@ -1565,13 +1565,13 @@ PR1_SCHEMA = StructType(
     + [
         _int_field("procedure_minutes",            "Duration of the procedure in minutes (PR1-7)"),
     ]
-    + _xcn_schema("anesthesiologist", "Anesthesiologist", "PR1-8")
+    + _xcn_array_schema("anesthesiologist", "Anesthesiologist (XCN, repeatable, deprecated v2.3)", "PR1-8")
     + _cwe_schema("anesthesia_code", "Anesthesia code (CWE)", "PR1-9")
     + [
         _int_field("anesthesia_minutes",           "Anesthesia duration in minutes (PR1-10)"),
     ]
-    + _xcn_schema("surgeon", "Surgeon", "PR1-11")
-    + _xcn_schema("procedure_practitioner", "Procedure practitioner", "PR1-12")
+    + _xcn_array_schema("surgeon", "Surgeon (XCN, repeatable, deprecated v2.3)", "PR1-11")
+    + _xcn_array_schema("procedure_practitioner", "Procedure practitioner (XCN, repeatable, deprecated v2.3)", "PR1-12")
     + _cwe_schema("consent_code", "Consent", "PR1-13")
     + [
         _s("procedure_priority",           "Procedure priority (PR1-14)"),

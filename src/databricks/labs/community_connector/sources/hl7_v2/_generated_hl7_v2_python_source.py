@@ -2178,7 +2178,7 @@ def register_lakeflow_source(spark):
             "result_status": _v(seg.get_field(25)),
             **_prl_fields(seg, 26, "parent_result"),
             "quantity_timing": _v(seg.get_first_repetition(27)),
-            **_xcn_fields(seg, 28, "result_copies_to"),
+            **_xcn_array_fields(seg, 28, "result_copies_to"),
             **_eip_array_fields(seg, 29, "parent_placer_order_number"),
             "transportation_mode": _v(seg.get_field(30)),
             **_cwe_array_fields(seg, 31, "reason_for_study"),
@@ -2493,11 +2493,11 @@ def register_lakeflow_source(spark):
             "procedure_datetime": _parse_dtm(seg.get_field(5)),
             **_cwe_fields(seg, 6, "procedure_functional_type", repeating=False),
             "procedure_minutes": _i(seg.get_field(7)),
-            **_xcn_fields(seg, 8, "anesthesiologist"),
+            **_xcn_array_fields(seg, 8, "anesthesiologist"),
             **_cwe_fields(seg, 9, "anesthesia_code", repeating=False),
             "anesthesia_minutes": _i(seg.get_field(10)),
-            **_xcn_fields(seg, 11, "surgeon"),
-            **_xcn_fields(seg, 12, "procedure_practitioner"),
+            **_xcn_array_fields(seg, 11, "surgeon"),
+            **_xcn_array_fields(seg, 12, "procedure_practitioner"),
             **_cwe_fields(seg, 13, "consent_code", repeating=False),
             "procedure_priority": _v(seg.get_field(14)),
             **_cwe_fields(seg, 15, "associated_diagnosis_code", repeating=False),
@@ -4040,7 +4040,7 @@ def register_lakeflow_source(spark):
         + [
             _s("quantity_timing",                     "Quantity and timing of the order (OBR-27, deprecated in v2.7)"),
         ]
-        + _xcn_schema("result_copies_to", "Result copy-to provider", "OBR-28")
+        + _xcn_array_schema("result_copies_to", "Result copy-to provider (XCN, repeatable per spec)", "OBR-28")
         + _eip_array_schema("parent_placer_order_number", "Placer order number of the parent order (EIP, repeatable per spec)", "OBR-29")
         + [
             _s("transportation_mode",                  "Specimen transportation mode code (OBR-30)"),
@@ -4507,13 +4507,13 @@ def register_lakeflow_source(spark):
         + [
             _int_field("procedure_minutes",            "Duration of the procedure in minutes (PR1-7)"),
         ]
-        + _xcn_schema("anesthesiologist", "Anesthesiologist", "PR1-8")
+        + _xcn_array_schema("anesthesiologist", "Anesthesiologist (XCN, repeatable, deprecated v2.3)", "PR1-8")
         + _cwe_schema("anesthesia_code", "Anesthesia code (CWE)", "PR1-9")
         + [
             _int_field("anesthesia_minutes",           "Anesthesia duration in minutes (PR1-10)"),
         ]
-        + _xcn_schema("surgeon", "Surgeon", "PR1-11")
-        + _xcn_schema("procedure_practitioner", "Procedure practitioner", "PR1-12")
+        + _xcn_array_schema("surgeon", "Surgeon (XCN, repeatable, deprecated v2.3)", "PR1-11")
+        + _xcn_array_schema("procedure_practitioner", "Procedure practitioner (XCN, repeatable, deprecated v2.3)", "PR1-12")
         + _cwe_schema("consent_code", "Consent", "PR1-13")
         + [
             _s("procedure_priority",           "Procedure priority (PR1-14)"),
