@@ -669,12 +669,47 @@ def _cwe_array_fields(
 def _s_array_fields(
     seg: HL7Segment, field_n: int, column_name: str
 ) -> dict:
-    """Simple repeatable ID/IS field — all repetitions as a list of strings."""
+    """Simple repeatable ST/IS field — all repetitions as a list of raw strings (component separators preserved)."""
     raw = seg.get_field(field_n)
     if not raw:
         return {column_name: None}
     reps = [_v(r) for r in raw.split(seg._enc.rep_sep) if r]
     return {column_name: reps if reps else None}
+
+
+def _id_array_fields(
+    seg: HL7Segment, field_n: int, column_name: str
+) -> dict:
+    """ID (Coded Value) repeatable field — first component of each repetition only.
+    Strips spurious ^ within a repetition (e.g. 'A^S' → 'A') since ID is a scalar type."""
+    raw = seg.get_field(field_n)
+    if not raw:
+        return {column_name: None}
+    result = []
+    for rep in raw.split(seg._enc.rep_sep):
+        if not rep:
+            continue
+        val = _v(rep.split(seg._enc.comp_sep)[0])
+        if val:
+            result.append(val)
+    return {column_name: result if result else None}
+
+
+def _dtm_array_fields(
+    seg: HL7Segment, field_n: int, column_name: str
+) -> dict:
+    """DTM/DT repeatable field — each repetition parsed to ISO-8601 string."""
+    raw = seg.get_field(field_n)
+    if not raw:
+        return {column_name: None}
+    result = []
+    for rep in raw.split(seg._enc.rep_sep):
+        if not rep:
+            continue
+        val = _parse_dtm(_v(rep))
+        if val is not None:
+            result.append(val)
+    return {column_name: result if result else None}
 
 
 def _ei_array_fields(

@@ -1514,12 +1514,47 @@ def register_lakeflow_source(spark):
     def _s_array_fields(
         seg: HL7Segment, field_n: int, column_name: str
     ) -> dict:
-        """Simple repeatable ID/IS field — all repetitions as a list of strings."""
+        """Simple repeatable ST/IS field — all repetitions as a list of raw strings (component separators preserved)."""
         raw = seg.get_field(field_n)
         if not raw:
             return {column_name: None}
         reps = [_v(r) for r in raw.split(seg._enc.rep_sep) if r]
         return {column_name: reps if reps else None}
+
+
+    def _id_array_fields(
+        seg: HL7Segment, field_n: int, column_name: str
+    ) -> dict:
+        """ID (Coded Value) repeatable field — first component of each repetition only.
+        Strips spurious ^ within a repetition (e.g. 'A^S' → 'A') since ID is a scalar type."""
+        raw = seg.get_field(field_n)
+        if not raw:
+            return {column_name: None}
+        result = []
+        for rep in raw.split(seg._enc.rep_sep):
+            if not rep:
+                continue
+            val = _v(rep.split(seg._enc.comp_sep)[0])
+            if val:
+                result.append(val)
+        return {column_name: result if result else None}
+
+
+    def _dtm_array_fields(
+        seg: HL7Segment, field_n: int, column_name: str
+    ) -> dict:
+        """DTM/DT repeatable field — each repetition parsed to ISO-8601 string."""
+        raw = seg.get_field(field_n)
+        if not raw:
+            return {column_name: None}
+        result = []
+        for rep in raw.split(seg._enc.rep_sep):
+            if not rep:
+                continue
+            val = _parse_dtm(_v(rep))
+            if val is not None:
+                result.append(val)
+        return {column_name: result if result else None}
 
 
     def _ei_array_fields(
@@ -2084,7 +2119,7 @@ def register_lakeflow_source(spark):
             "accept_acknowledgment_type": _v(seg.get_field(15)),
             "application_acknowledgment_type": _v(seg.get_field(16)),
             "country_code": _v(seg.get_field(17)),
-            **_s_array_fields(seg, 18, "character_set"),
+            **_id_array_fields(seg, 18, "character_set"),
             **_cwe_fields(seg, 19, "principal_language", repeating=False),
             "alt_character_set_handling": _v(seg.get_field(20)),
             **_ei_array_fields(seg, 21, "message_profile_identifiers"),
@@ -2169,7 +2204,7 @@ def register_lakeflow_source(spark):
             **_cwe_fields(seg, 22, "courtesy_code", repeating=False),
             **_cwe_fields(seg, 23, "credit_rating", repeating=False),
             **_cwe_array_fields(seg, 24, "contract_code"),
-            **_s_array_fields(seg, 25, "contract_effective_date"),
+            **_dtm_array_fields(seg, 25, "contract_effective_date"),
             **_s_array_fields(seg, 26, "contract_amount"),
             **_s_array_fields(seg, 27, "contract_period"),
             **_cwe_fields(seg, 28, "interest_code", repeating=False),
@@ -2268,12 +2303,12 @@ def register_lakeflow_source(spark):
             "value_type": _v(seg.get_field(2)),
             **_cwe_fields(seg, 3, "observation_id", repeating=False),
             **_og_fields(seg, 4, "observation_sub_id"),
-            "observation_value": _v(seg.get_first_repetition(5)),
+            **_s_array_fields(seg, 5, "observation_value"),
             **_cwe_fields(seg, 6, "units", repeating=False),
             "references_range": _v(seg.get_field(7)),
             **_cwe_array_fields(seg, 8, "interpretation_codes"),
             "probability": _v(seg.get_field(9)),
-            **_s_array_fields(seg, 10, "nature_of_abnormal_test"),
+            **_id_array_fields(seg, 10, "nature_of_abnormal_test"),
             "observation_result_status": _v(seg.get_field(11)),
             "effective_date_of_ref_range": _parse_dtm(seg.get_field(12)),
             "user_defined_access_checks": _v(seg.get_field(13)),
@@ -2868,7 +2903,7 @@ def register_lakeflow_source(spark):
             "administered_strength": _v(seg.get_field(13)),
             **_cwe_fields(seg, 14, "administered_strength_units", repeating=False),
             **_s_array_fields(seg, 15, "substance_lot_number"),
-            **_s_array_fields(seg, 16, "substance_expiration_date"),
+            **_dtm_array_fields(seg, 16, "substance_expiration_date"),
             **_cwe_array_fields(seg, 17, "substance_manufacturer_name"),
             **_cwe_array_fields(seg, 18, "substance_treatment_refusal_reason"),
             **_cwe_array_fields(seg, 19, "indication"),
@@ -2927,7 +2962,7 @@ def register_lakeflow_source(spark):
             **_xcn_array_fields(seg, 5, "primary_activity_provider"),
             "origination_datetime": _parse_dtm(seg.get_field(6)),
             "transcription_datetime": _parse_dtm(seg.get_field(7)),
-            **_s_array_fields(seg, 8, "edit_datetime"),
+            **_dtm_array_fields(seg, 8, "edit_datetime"),
             **_xcn_array_fields(seg, 9, "originator"),
             **_xcn_array_fields(seg, 10, "assigned_document_authenticator"),
             **_xcn_array_fields(seg, 11, "transcriptionist"),
@@ -4174,7 +4209,7 @@ def register_lakeflow_source(spark):
         + _cwe_schema("observation_id", "Observation identifier (CWE)", "OBX-3")
         + _og_schema("observation_sub_id", "Observation sub-ID (OG, v2.8.2+; OG.1 is backward-compatible with legacy ST sub-ID)", "OBX-4")
         + [
-            _s("observation_value",               "The result value (OBX-5); data type is Varies — check value_type (OBX-2) to interpret"),
+            _s_array("observation_value",          "The result value(s) (OBX-5, Varies [0..*]); each repetition is a raw string — check value_type (OBX-2) to interpret"),
         ]
         + _cwe_schema("units", "Units of measure (CWE)", "OBX-6")
         + [

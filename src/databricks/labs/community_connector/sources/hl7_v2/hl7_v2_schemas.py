@@ -1179,7 +1179,7 @@ OBX_SCHEMA = StructType(
     + _cwe_schema("observation_id", "Observation identifier (CWE)", "OBX-3")
     + _og_schema("observation_sub_id", "Observation sub-ID (OG, v2.8.2+; OG.1 is backward-compatible with legacy ST sub-ID)", "OBX-4")
     + [
-        _s("observation_value",               "The result value (OBX-5); data type is Varies — check value_type (OBX-2) to interpret"),
+        _s_array("observation_value",          "The result value(s) (OBX-5, Varies [0..*]); each repetition is a raw string — check value_type (OBX-2) to interpret"),
     ]
     + _cwe_schema("units", "Units of measure (CWE)", "OBX-6")
     + [
