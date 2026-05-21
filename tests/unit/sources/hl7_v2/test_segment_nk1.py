@@ -20,29 +20,29 @@ class TestNK1Extraction:
     def test_adt_nk1(self):
         msg = parse_first(load_sample("sample_adt.hl7"))
         row = extract_segment(msg, "NK1", _extract_nk1)
-        assert row["nk_names"][0]["family_name"] == "Doe"
-        assert row["nk_names"][0]["given_name"] == "Jane"
-        assert row["relationship_code"] == "SPO"
+        assert row["names"][0]["family_name"] == "Doe"
+        assert row["names"][0]["given_name"] == "Jane"
+        assert row["relationship"] == "SPO"
 
     def test_comprehensive_multiple_nk1(self):
         msg = parse_first(load_sample("sample_adt_comprehensive.hl7"))
         segs = segments_of_type(msg, "NK1")
         assert len(segs) == 2
         row1 = _extract_nk1(segs[0])
-        assert row1["nk_names"][0]["family_name"] == "Martinez"
-        assert row1["nk_names"][0]["given_name"] == "Carlos"
-        assert row1["relationship_code"] == "SPO"
+        assert row1["names"][0]["family_name"] == "Martinez"
+        assert row1["names"][0]["given_name"] == "Carlos"
+        assert row1["relationship"] == "SPO"
         row2 = _extract_nk1(segs[1])
-        assert row2["nk_names"][0]["family_name"] == "Martinez"
-        assert row2["relationship_code"] == "MTH"
+        assert row2["names"][0]["family_name"] == "Martinez"
+        assert row2["relationship"] == "MTH"
 
     def test_batch_nk1(self):
         raw = load_sample("sample_batch_mixed.hl7")
         msgs = _split_messages(raw)
         msg3 = parse_message(msgs[2])
         row = extract_segment(msg3, "NK1", _extract_nk1)
-        assert row["nk_names"][0]["family_name"] == "Batch"
-        assert row["relationship_code"] == "SPO"
+        assert row["names"][0]["family_name"] == "Batch"
+        assert row["relationship"] == "SPO"
 
 
 class TestNK1MissingFields:
@@ -53,8 +53,8 @@ class TestNK1MissingFields:
         )
         row = _extract_nk1(msg.get_segment("NK1"))
         assert row["set_id"] == 1
-        assert row["nk_names"] is None
-        assert row["relationship_code"] is None
+        assert row["names"] is None
+        assert row["relationship"] is None
         assert row["phone_number"] is None
         assert row["administrative_sex"] is None
 
@@ -64,9 +64,9 @@ class TestNK1MissingFields:
             "NK1|1|Smith^Jane"
         )
         row = _extract_nk1(msg.get_segment("NK1"))
-        assert row["nk_names"][0]["family_name"] == "Smith"
-        assert row["nk_names"][0]["given_name"] == "Jane"
-        assert row["relationship_code"] is None
+        assert row["names"][0]["family_name"] == "Smith"
+        assert row["names"][0]["given_name"] == "Jane"
+        assert row["relationship"] is None
 
 
 class TestNK1NewComposites:

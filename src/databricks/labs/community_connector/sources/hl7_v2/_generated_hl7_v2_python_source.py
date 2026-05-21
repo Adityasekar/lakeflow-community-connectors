@@ -2405,9 +2405,8 @@ def register_lakeflow_source(spark):
     def _extract_nk1(seg: HL7Segment) -> dict:
         return {
             "set_id": _i(seg.get_field(1)) or 1,
-            **_xpn_array_fields(seg, 2, "nk_names"),
-            "relationship": _v(seg.get_field(3)),
-            **_cwe_fields(seg, 3, "relationship_code", repeating=False),
+            **_xpn_array_fields(seg, 2, "names"),
+            **_cwe_fields(seg, 3, "relationship", repeating=False),
             **_xad_array_fields(seg, 4, "address"),
             **_xtn_array_fields(seg, 5, "phone_number"),
             **_xtn_array_fields(seg, 6, "business_phone"),
@@ -2442,9 +2441,9 @@ def register_lakeflow_source(spark):
             **_cwe_array_fields(seg, 35, "race"),
             **_cwe_fields(seg, 36, "handicap", repeating=False),
             "contact_ssn": _v(seg.get_field(37)),
-            "nk_birth_place": _v(seg.get_field(38)),
+            "birth_place": _v(seg.get_field(38)),
             **_cwe_fields(seg, 39, "vip_indicator", repeating=False),
-            **_xtn_fields(seg, 40, "nk_telecommunication_info"),
+            **_xtn_fields(seg, 40, "telecommunication_info"),
             **_xtn_fields(seg, 41, "contact_telecommunication_info"),
         }
 
@@ -4370,10 +4369,9 @@ def register_lakeflow_source(spark):
         _METADATA_FIELDS
         + [
             _pk_int_field("set_id",                  "Sequence number of this next-of-kin record within the message; part of composite primary key (NK1-1)"),
-            *_xpn_array_schema("nk_names", "Next of kin names", "NK1-2"),
-            _s("relationship",               "Relationship to patient composite (NK1-3), raw; use relationship_code_* CWE fields"),
+            *_xpn_array_schema("names", "Next of kin names", "NK1-2"),
         ]
-        + _cwe_schema("relationship_code", "Relationship to patient", "NK1-3")
+        + _cwe_schema("relationship", "Relationship to patient (CWE)", "NK1-3")
         + _xad_array_schema("address", "Next of kin address (XAD, repeatable per spec)", "NK1-4")
         + _xtn_array_schema("phone_number", "Next of kin home or primary phone (XTN, repeatable per spec)", "NK1-5")
         + _xtn_array_schema("business_phone", "Next of kin business phone (XTN, repeatable per spec)", "NK1-6")
@@ -4419,10 +4417,10 @@ def register_lakeflow_source(spark):
         + _cwe_schema("handicap", "Handicap (CWE)", "NK1-36")
         + [
             _s("contact_ssn",                "Social Security Number of the contact person (NK1-37, deprecated in v2.7)"),
-            _s("nk_birth_place",             "Birth place of the next of kin (NK1-38, v2.6+)"),
+            _s("birth_place",                "Birth place of the next of kin (NK1-38, v2.6+)"),
         ]
         + _cwe_schema("vip_indicator", "VIP indicator (CWE)", "NK1-39")
-        + _xtn_schema("nk_telecommunication_info", "Next of kin telecommunication", "NK1-40")
+        + _xtn_schema("telecommunication_info", "Next of kin telecommunication (XTN)", "NK1-40")
         + _xtn_schema("contact_telecommunication_info", "Contact person telecommunication", "NK1-41")
     )
 

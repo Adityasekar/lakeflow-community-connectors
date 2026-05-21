@@ -403,9 +403,8 @@ def _extract_dg1(seg: HL7Segment) -> dict:
 def _extract_nk1(seg: HL7Segment) -> dict:
     return {
         "set_id": _i(seg.get_field(1)) or 1,
-        **_xpn_array_fields(seg, 2, "nk_names"),
-        "relationship": _v(seg.get_field(3)),
-        **_cwe_fields(seg, 3, "relationship_code", repeating=False),
+        **_xpn_array_fields(seg, 2, "names"),
+        **_cwe_fields(seg, 3, "relationship", repeating=False),
         **_xad_array_fields(seg, 4, "address"),
         **_xtn_array_fields(seg, 5, "phone_number"),
         **_xtn_array_fields(seg, 6, "business_phone"),
@@ -440,9 +439,9 @@ def _extract_nk1(seg: HL7Segment) -> dict:
         **_cwe_array_fields(seg, 35, "race"),
         **_cwe_fields(seg, 36, "handicap", repeating=False),
         "contact_ssn": _v(seg.get_field(37)),
-        "nk_birth_place": _v(seg.get_field(38)),
+        "birth_place": _v(seg.get_field(38)),
         **_cwe_fields(seg, 39, "vip_indicator", repeating=False),
-        **_xtn_fields(seg, 40, "nk_telecommunication_info"),
+        **_xtn_fields(seg, 40, "telecommunication_info"),
         **_xtn_fields(seg, 41, "contact_telecommunication_info"),
     }
 
