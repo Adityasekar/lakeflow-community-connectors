@@ -1693,7 +1693,7 @@ SPM_SCHEMA = StructType(
     + [
         _pk_int_field("set_id",                      "Sequence number for this SPM segment within the message (SPM-1)"),
     ]
-    + _eip_array_schema("specimen_id", "Specimen identifier (EIP per v2.8 spec; modeled as ARRAY for cardinality safety)", "SPM-2")
+    + _eip_schema("specimen_id", "Specimen identifier (EIP, single instance per spec [0..1], SPM-2)", "SPM-2")
     + _eip_array_schema("specimen_parent_ids", "Parent specimen identifiers (EIP, repeatable per spec)", "SPM-3")
     + _cwe_schema("specimen_type", "Specimen type", "SPM-4")
     + _cwe_array_schema("specimen_type_modifier", "Specimen type modifier (CWE, repeatable per spec)", "SPM-5")

@@ -46,7 +46,7 @@ class TestSPMMissingFields:
         )
         row = _extract_spm(msg.get_segment("SPM"))
         assert row["set_id"] == 1
-        assert row["specimen_id"] is None
+        assert row["specimen_id_parent"] is None
         assert row["specimen_type"] is None
         assert row["specimen_type_text"] is None
         assert row["specimen_source_site"] is None
@@ -62,12 +62,13 @@ class TestSPMMissingFields:
 
 
 class TestSPMNewComposites:
-    """SPM-2 specimen_id (EIP array), SPM-12 collection_amount (CQ), SPM-17 DR."""
+    """SPM-2 specimen_id (EIP single [0..1]), SPM-12 collection_amount (CQ), SPM-17 DR."""
 
     def test_spm_eip_cq_and_dr(self):
+        # SPM-2 is EIP [0..1] — single instance, flat columns (not array)
         fields = {
             1: "1",
-            2: "SPEC123&NS1&OID1&ISO^PARENT99&NS2&OID2&ISO~SPEC456&NS1&OID1&ISO^PARENT100&NS2&OID2&ISO",
+            2: "SPEC123&NS1&OID1&ISO^PARENT99&NS2&OID2&ISO",
             12: "10.5^mL&Milliliter&UCUM",
             17: "20240301120000^20240301140000",
         }
@@ -77,11 +78,11 @@ class TestSPMNewComposites:
             "SPM|" + "|".join(seg_fields)
         )
         row = _extract_spm(msg.get_segment("SPM"))
-        sid = row["specimen_id"]
-        assert len(sid) == 2
-        assert sid[0]["parent"]["entity_identifier"] == "SPEC123"
-        assert sid[0]["child"]["entity_identifier"] == "PARENT99"
-        assert sid[1]["parent"]["entity_identifier"] == "SPEC456"
+        assert row["specimen_id_parent"] == "SPEC123"
+        assert row["specimen_id_parent_namespace_id"] == "NS1"
+        assert row["specimen_id_parent_universal_id"] == "OID1"
+        assert row["specimen_id_parent_universal_id_type"] == "ISO"
+        assert row["specimen_id_child"] == "PARENT99"
 
         assert row["specimen_collection_amount"] == "10.5"
         assert row["specimen_collection_amount_units"] == "mL"

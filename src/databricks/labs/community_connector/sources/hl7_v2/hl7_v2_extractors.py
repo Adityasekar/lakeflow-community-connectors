@@ -676,7 +676,7 @@ def _extract_nte(seg: HL7Segment) -> dict:
 def _extract_spm(seg: HL7Segment) -> dict:
     return {
         "set_id": _i(seg.get_field(1)) or 1,
-        **_eip_array_fields(seg, 2, "specimen_id"),
+        **_eip_fields(seg, 2, "specimen_id"),
         **_eip_array_fields(seg, 3, "specimen_parent_ids"),
         **_cwe_fields(seg, 4, "specimen_type", repeating=False),
         **_cwe_array_fields(seg, 5, "specimen_type_modifier"),
