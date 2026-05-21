@@ -305,23 +305,15 @@ def _aui_fields(seg: HL7Segment, field_n: int, prefix: str) -> dict:
 
 
 def _dld_fields(seg: HL7Segment, field_n: int, prefix: str) -> dict:
-    """DLD (Discharge Location and Date) — 2 components: CWE (location) + DTM (effective date)."""
-    def gsc(comp, sub):
-        return _v(seg.get_sub_component(field_n, comp, sub))
-
+    """DLD (Discharge Location and Date) — 2 components: location code (CWE.1) + effective date (DTM)."""
     def gc(comp):
         return _v(seg.get_component(field_n, comp))
 
+    def gsc(comp, sub):
+        return _v(seg.get_sub_component(field_n, comp, sub))
+
     return {
-        f"{prefix}": gsc(1, 1) or gc(1),
-        f"{prefix}_text": gsc(1, 2),
-        f"{prefix}_coding_system": gsc(1, 3),
-        f"{prefix}_alt_code": gsc(1, 4),
-        f"{prefix}_alt_text": gsc(1, 5),
-        f"{prefix}_alt_coding_system": gsc(1, 6),
-        f"{prefix}_coding_system_version": gsc(1, 7),
-        f"{prefix}_alt_coding_system_version": gsc(1, 8),
-        f"{prefix}_original_text": gsc(1, 9),
+        f"{prefix}":               gsc(1, 1) or gc(1),
         f"{prefix}_effective_date": _parse_dtm(gc(2)),
     }
 

@@ -81,6 +81,4 @@ class TestPV1NewComposites:
         assert row["financial_class"][1]["code"] == "HMO"
         assert row["financial_class"][1]["text"] == "Health Maint"
         assert row["discharged_to_location"] == "HOME"
-        assert row["discharged_to_location_text"] == "Home discharge"
-        assert row["discharged_to_location_coding_system"] == "L"
         assert row["discharged_to_location_effective_date"] is not None

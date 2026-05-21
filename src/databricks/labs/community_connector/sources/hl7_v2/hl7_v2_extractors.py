@@ -244,7 +244,7 @@ def _extract_pv1(seg: HL7Segment) -> dict:
         "total_payments": _v(seg.get_field(49)),
         **_cx_array_fields(seg, 50, "alternate_visit_id"),
         **_cwe_fields(seg, 51, "visit_indicator", repeating=False),
-        **_xcn_fields(seg, 52, "other_healthcare_provider"),
+        **_xcn_array_fields(seg, 52, "other_healthcare_provider"),
         "service_episode_description": _v(seg.get_field(53)),
         **_cx_fields(seg, 54, "service_episode_identifier", repeating=False),
     }

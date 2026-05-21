@@ -463,18 +463,10 @@ def _aui_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
 
 
 def _dld_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
-    """DLD (Discharge Location and Date) — CWE + DTM."""
+    """DLD (Discharge Location and Date) — 2 components: location code (CWE.1) + effective date (DTM)."""
     return [
-        _s(f"{prefix}",                          f"{label} location code ({field_ref}.1.1, CWE)"),
-        _s(f"{prefix}_text",                     f"{label} location text ({field_ref}.1.2, CWE)"),
-        _s(f"{prefix}_coding_system",            f"{label} location coding system ({field_ref}.1.3, CWE)"),
-        _s(f"{prefix}_alt_code",                 f"{label} location alt code ({field_ref}.1.4, CWE)"),
-        _s(f"{prefix}_alt_text",                 f"{label} location alt text ({field_ref}.1.5, CWE)"),
-        _s(f"{prefix}_alt_coding_system",        f"{label} location alt coding system ({field_ref}.1.6, CWE)"),
-        _s(f"{prefix}_coding_system_version",    f"{label} location coding system version ({field_ref}.1.7, CWE)"),
-        _s(f"{prefix}_alt_coding_system_version", f"{label} location alt coding system version ({field_ref}.1.8, CWE)"),
-        _s(f"{prefix}_original_text",            f"{label} location original text ({field_ref}.1.9, CWE)"),
-        _ts(f"{prefix}_effective_date",          f"{label} effective date ({field_ref}.2, DTM)"),
+        _s(f"{prefix}",               f"{label} location code ({field_ref}.1, CWE.1)"),
+        _ts(f"{prefix}_effective_date", f"{label} effective date ({field_ref}.2, DTM)"),
     ]
 
 
@@ -1052,7 +1044,7 @@ PV1_SCHEMA = StructType(
     ]
     + _cx_array_schema("alternate_visit_id", "Alternate visit ID (CX, repeatable per spec)", "PV1-50")
     + _cwe_schema("visit_indicator", "Visit indicator (CWE)", "PV1-51")
-    + _xcn_schema("other_healthcare_provider", "Other healthcare provider", "PV1-52")
+    + _xcn_array_schema("other_healthcare_provider", "Other healthcare provider (XCN, repeatable per spec, deprecated v2.7)", "PV1-52")
     + [
         _s("service_episode_description",   "Free-text description of the service episode (PV1-53, v2.8+)"),
     ]
