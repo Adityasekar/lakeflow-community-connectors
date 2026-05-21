@@ -304,6 +304,18 @@ def _aui_fields(seg: HL7Segment, field_n: int, prefix: str) -> dict:
     }
 
 
+def _dln_fields(seg: HL7Segment, field_n: int, prefix: str) -> dict:
+    """DLN (Driver's License Number) — 3 components: license number (ST) + issuing state (IS) + expiration date (DT)."""
+    def gc(comp):
+        return _v(seg.get_component(field_n, comp))
+
+    return {
+        f"{prefix}_number":          gc(1),
+        f"{prefix}_issuing_state":   gc(2),
+        f"{prefix}_expiration_date": _parse_dtm(gc(3)),
+    }
+
+
 def _dld_fields(seg: HL7Segment, field_n: int, prefix: str) -> dict:
     """DLD (Discharge Location and Date) — 2 components: location code (CWE.1) + effective date (DTM)."""
     def gc(comp):

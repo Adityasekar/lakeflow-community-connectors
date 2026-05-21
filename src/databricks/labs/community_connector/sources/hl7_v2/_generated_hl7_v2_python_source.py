@@ -1149,6 +1149,18 @@ def register_lakeflow_source(spark):
         }
 
 
+    def _dln_fields(seg: HL7Segment, field_n: int, prefix: str) -> dict:
+        """DLN (Driver's License Number) — 3 components: license number (ST) + issuing state (IS) + expiration date (DT)."""
+        def gc(comp):
+            return _v(seg.get_component(field_n, comp))
+
+        return {
+            f"{prefix}_number":          gc(1),
+            f"{prefix}_issuing_state":   gc(2),
+            f"{prefix}_expiration_date": _parse_dtm(gc(3)),
+        }
+
+
     def _dld_fields(seg: HL7Segment, field_n: int, prefix: str) -> dict:
         """DLD (Discharge Location and Date) — 2 components: location code (CWE.1) + effective date (DTM)."""
         def gc(comp):
@@ -2064,9 +2076,9 @@ def register_lakeflow_source(spark):
             **_cwe_fields(seg, 15, "primary_language", repeating=False),
             **_cwe_fields(seg, 16, "marital_status", repeating=False),
             **_cwe_fields(seg, 17, "religion", repeating=False),
-            **_cx_fields(seg, 18, "patient_account", repeating=False),
+            **_cx_fields(seg, 18, "patient_account_number", repeating=False),
             "ssn": _v(seg.get_field(19)),
-            "drivers_license": _v(seg.get_field(20)),
+            **_dln_fields(seg, 20, "drivers_license"),
             **_cx_array_fields(seg, 21, "mothers_identifier"),
             **_cwe_array_fields(seg, 22, "ethnic_group"),
             "birth_place": _v(seg.get_field(23)),
@@ -3404,6 +3416,15 @@ def register_lakeflow_source(spark):
         ]
 
 
+    def _dln_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
+        """DLN (Driver's License Number) — 3 components: license number (ST) + issuing state (IS) + expiration date (DT)."""
+        return [
+            _s(f"{prefix}_number",          f"{label} license number ({field_ref}.1, ST)"),
+            _s(f"{prefix}_issuing_state",   f"{label} issuing state, province, country ({field_ref}.2, IS, Table 0333)"),
+            _ts(f"{prefix}_expiration_date", f"{label} expiration date ({field_ref}.3, DT)"),
+        ]
+
+
     def _dld_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
         """DLD (Discharge Location and Date) — 2 components: location code (CWE.1) + effective date (DTM)."""
         return [
@@ -3891,9 +3912,9 @@ def register_lakeflow_source(spark):
             *_cwe_schema("primary_language", "Primary language", "PID-15"),
             *_cwe_schema("marital_status", "Marital status", "PID-16"),
             *_cwe_schema("religion", "Religion", "PID-17"),
-            *_cx_schema("patient_account", "Patient account", "PID-18"),
+            *_cx_schema("patient_account_number", "Patient account number", "PID-18"),
             _s("ssn",                           "Social Security Number (PID-19, deprecated in v2.7)"),
-            _s("drivers_license",               "Driver's license number and issuing state (PID-20, deprecated in v2.7)"),
+            *_dln_schema("drivers_license", "Driver's license", "PID-20"),
             *_cx_array_schema("mothers_identifier", "Mother's identifier (CX, repeatable per spec)", "PID-21"),
             *_cwe_array_schema("ethnic_group", "Ethnic group (CWE, repeatable per spec)", "PID-22"),
             _s("birth_place",                   "Birthplace as free text (PID-23)"),
