@@ -1734,10 +1734,10 @@ def register_lakeflow_source(spark):
     def _eip_array_fields(
         seg: HL7Segment, field_n: int, column_name: str
     ) -> dict:
-        """EIP (Entity Identifier Pair) — all repetitions as a list of {parent, child} dicts.
+        """EIP (Entity Identifier Pair) — all repetitions as a list of {placer_assigned_identifier, filler_assigned_identifier} dicts.
 
-        Each EIP has two components (EIP.1 = parent EI, EIP.2 = child EI), each
-        further decomposable into 4 sub-components via the `&` separator.
+        Each EIP has two components (EIP.1 = Placer Assigned Identifier, EIP.2 = Filler Assigned Identifier),
+        each further decomposable into 4 sub-components via the `&` separator.
         """
         raw = seg.get_field(field_n)
         if not raw:
@@ -1761,14 +1761,14 @@ def register_lakeflow_source(spark):
                 }
 
             result.append({
-                "parent": _ei_from(parts[0] if len(parts) > 0 else None),
-                "child": _ei_from(parts[1] if len(parts) > 1 else None),
+                "placer_assigned_identifier": _ei_from(parts[0] if len(parts) > 0 else None),
+                "filler_assigned_identifier": _ei_from(parts[1] if len(parts) > 1 else None),
             })
         return {column_name: result if result else None}
 
 
     def _eip_fields(seg: HL7Segment, field_n: int, prefix: str) -> dict:
-        """EIP (Entity Identifier Pair) — single instance: parent EI + child EI, 8 flat columns."""
+        """EIP (Entity Identifier Pair) — single instance: placer EI + filler EI, 8 flat columns."""
         def gc(comp):
             return _v(seg.get_component(field_n, comp))
 
@@ -1776,14 +1776,14 @@ def register_lakeflow_source(spark):
             return _v(seg.get_sub_component(field_n, comp, sub))
 
         return {
-            f"{prefix}_parent":                      gsc(1, 1) or gc(1),
-            f"{prefix}_parent_namespace_id":         gsc(1, 2),
-            f"{prefix}_parent_universal_id":         gsc(1, 3),
-            f"{prefix}_parent_universal_id_type":    gsc(1, 4),
-            f"{prefix}_child":                       gsc(2, 1) or gc(2),
-            f"{prefix}_child_namespace_id":          gsc(2, 2),
-            f"{prefix}_child_universal_id":          gsc(2, 3),
-            f"{prefix}_child_universal_id_type":     gsc(2, 4),
+            f"{prefix}_placer_assigned_identifier":                      gsc(1, 1) or gc(1),
+            f"{prefix}_placer_assigned_identifier_namespace_id":         gsc(1, 2),
+            f"{prefix}_placer_assigned_identifier_universal_id":         gsc(1, 3),
+            f"{prefix}_placer_assigned_identifier_universal_id_type":    gsc(1, 4),
+            f"{prefix}_filler_assigned_identifier":                      gsc(2, 1) or gc(2),
+            f"{prefix}_filler_assigned_identifier_namespace_id":         gsc(2, 2),
+            f"{prefix}_filler_assigned_identifier_universal_id":         gsc(2, 3),
+            f"{prefix}_filler_assigned_identifier_universal_id_type":    gsc(2, 4),
         }
 
 
@@ -3200,8 +3200,8 @@ def register_lakeflow_source(spark):
         StructField("universal_id_type", StringType(), nullable=True),
     ])
     _EIP_STRUCT = StructType([
-        StructField("parent", _EI_INNER_STRUCT, nullable=True),
-        StructField("child", _EI_INNER_STRUCT, nullable=True),
+        StructField("placer_assigned_identifier", _EI_INNER_STRUCT, nullable=True),
+        StructField("filler_assigned_identifier", _EI_INNER_STRUCT, nullable=True),
     ])
 
 
@@ -3291,7 +3291,7 @@ def register_lakeflow_source(spark):
 
 
     def _eip_array_schema(column_name: str, label: str, field_ref: str) -> list[StructField]:
-        """EIP (Entity Identifier Pair) — repeating field as ArrayType(StructType<parent: EI, child: EI>)."""
+        """EIP (Entity Identifier Pair) — repeating field as ArrayType(StructType<placer_assigned_identifier: EI, filler_assigned_identifier: EI>)."""
         return [StructField(column_name, ArrayType(_EIP_STRUCT, containsNull=True), nullable=True)]
 
 
@@ -3552,16 +3552,16 @@ def register_lakeflow_source(spark):
 
 
     def _eip_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
-        """EIP (Entity Identifier Pair) — single instance: 8 flat fields for parent and child EI."""
+        """EIP (Entity Identifier Pair) — single instance: 8 flat fields for placer and filler EI."""
         return [
-            _s(f"{prefix}_parent",                   f"{label} parent entity identifier ({field_ref}.1.1)"),
-            _s(f"{prefix}_parent_namespace_id",       f"{label} parent namespace ID ({field_ref}.1.2)"),
-            _s(f"{prefix}_parent_universal_id",       f"{label} parent universal ID ({field_ref}.1.3)"),
-            _s(f"{prefix}_parent_universal_id_type",  f"{label} parent universal ID type ({field_ref}.1.4)"),
-            _s(f"{prefix}_child",                     f"{label} child entity identifier ({field_ref}.2.1)"),
-            _s(f"{prefix}_child_namespace_id",        f"{label} child namespace ID ({field_ref}.2.2)"),
-            _s(f"{prefix}_child_universal_id",        f"{label} child universal ID ({field_ref}.2.3)"),
-            _s(f"{prefix}_child_universal_id_type",   f"{label} child universal ID type ({field_ref}.2.4)"),
+            _s(f"{prefix}_placer_assigned_identifier",                   f"{label} placer assigned identifier ({field_ref}.1.1, EIP.1)"),
+            _s(f"{prefix}_placer_assigned_identifier_namespace_id",       f"{label} placer assigned identifier namespace ID ({field_ref}.1.2)"),
+            _s(f"{prefix}_placer_assigned_identifier_universal_id",       f"{label} placer assigned identifier universal ID ({field_ref}.1.3)"),
+            _s(f"{prefix}_placer_assigned_identifier_universal_id_type",  f"{label} placer assigned identifier universal ID type ({field_ref}.1.4)"),
+            _s(f"{prefix}_filler_assigned_identifier",                    f"{label} filler assigned identifier ({field_ref}.2.1, EIP.2)"),
+            _s(f"{prefix}_filler_assigned_identifier_namespace_id",       f"{label} filler assigned identifier namespace ID ({field_ref}.2.2)"),
+            _s(f"{prefix}_filler_assigned_identifier_universal_id",       f"{label} filler assigned identifier universal ID ({field_ref}.2.3)"),
+            _s(f"{prefix}_filler_assigned_identifier_universal_id_type",  f"{label} filler assigned identifier universal ID type ({field_ref}.2.4)"),
         ]
 
 

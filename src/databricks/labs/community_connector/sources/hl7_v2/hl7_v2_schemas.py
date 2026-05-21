@@ -250,8 +250,8 @@ _EI_INNER_STRUCT = StructType([
     StructField("universal_id_type", StringType(), nullable=True),
 ])
 _EIP_STRUCT = StructType([
-    StructField("parent", _EI_INNER_STRUCT, nullable=True),
-    StructField("child", _EI_INNER_STRUCT, nullable=True),
+    StructField("placer_assigned_identifier", _EI_INNER_STRUCT, nullable=True),
+    StructField("filler_assigned_identifier", _EI_INNER_STRUCT, nullable=True),
 ])
 
 
@@ -341,7 +341,7 @@ def _xad_array_schema(column_name: str, label: str, field_ref: str) -> list[Stru
 
 
 def _eip_array_schema(column_name: str, label: str, field_ref: str) -> list[StructField]:
-    """EIP (Entity Identifier Pair) — repeating field as ArrayType(StructType<parent: EI, child: EI>)."""
+    """EIP (Entity Identifier Pair) — repeating field as ArrayType(StructType<placer_assigned_identifier: EI, filler_assigned_identifier: EI>)."""
     return [StructField(column_name, ArrayType(_EIP_STRUCT, containsNull=True), nullable=True)]
 
 
@@ -602,16 +602,16 @@ def _pl_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
 
 
 def _eip_schema(prefix: str, label: str, field_ref: str) -> list[StructField]:
-    """EIP (Entity Identifier Pair) — single instance: 8 flat fields for parent and child EI."""
+    """EIP (Entity Identifier Pair) — single instance: 8 flat fields for placer and filler EI."""
     return [
-        _s(f"{prefix}_parent",                   f"{label} parent entity identifier ({field_ref}.1.1)"),
-        _s(f"{prefix}_parent_namespace_id",       f"{label} parent namespace ID ({field_ref}.1.2)"),
-        _s(f"{prefix}_parent_universal_id",       f"{label} parent universal ID ({field_ref}.1.3)"),
-        _s(f"{prefix}_parent_universal_id_type",  f"{label} parent universal ID type ({field_ref}.1.4)"),
-        _s(f"{prefix}_child",                     f"{label} child entity identifier ({field_ref}.2.1)"),
-        _s(f"{prefix}_child_namespace_id",        f"{label} child namespace ID ({field_ref}.2.2)"),
-        _s(f"{prefix}_child_universal_id",        f"{label} child universal ID ({field_ref}.2.3)"),
-        _s(f"{prefix}_child_universal_id_type",   f"{label} child universal ID type ({field_ref}.2.4)"),
+        _s(f"{prefix}_placer_assigned_identifier",                   f"{label} placer assigned identifier ({field_ref}.1.1, EIP.1)"),
+        _s(f"{prefix}_placer_assigned_identifier_namespace_id",       f"{label} placer assigned identifier namespace ID ({field_ref}.1.2)"),
+        _s(f"{prefix}_placer_assigned_identifier_universal_id",       f"{label} placer assigned identifier universal ID ({field_ref}.1.3)"),
+        _s(f"{prefix}_placer_assigned_identifier_universal_id_type",  f"{label} placer assigned identifier universal ID type ({field_ref}.1.4)"),
+        _s(f"{prefix}_filler_assigned_identifier",                    f"{label} filler assigned identifier ({field_ref}.2.1, EIP.2)"),
+        _s(f"{prefix}_filler_assigned_identifier_namespace_id",       f"{label} filler assigned identifier namespace ID ({field_ref}.2.2)"),
+        _s(f"{prefix}_filler_assigned_identifier_universal_id",       f"{label} filler assigned identifier universal ID ({field_ref}.2.3)"),
+        _s(f"{prefix}_filler_assigned_identifier_universal_id_type",  f"{label} filler assigned identifier universal ID type ({field_ref}.2.4)"),
     ]
 
 

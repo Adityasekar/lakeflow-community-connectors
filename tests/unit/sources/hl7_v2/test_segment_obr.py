@@ -103,8 +103,8 @@ class TestOBRCompositeFields:
         assert row["parent_result_sub_id"] == "SUB1"
         assert row["parent_result_descriptor"] == "Some descriptor"
 
-        assert row["parent_placer_order_number"][0]["parent"]["entity_identifier"] == "PARENT123"
-        assert row["parent_placer_order_number"][0]["child"]["entity_identifier"] == "CHILD456"
+        assert row["parent_placer_order_number"][0]["placer_assigned_identifier"]["entity_identifier"] == "PARENT123"
+        assert row["parent_placer_order_number"][0]["filler_assigned_identifier"]["entity_identifier"] == "CHILD456"
 
         principal = row
         assert principal["principal_result_interpreter"] == "DOC1"
@@ -119,4 +119,4 @@ class TestOBRCompositeFields:
         assert row["technician"][0]["family_name"] == "Lab"
         assert row["transcriptionist"][0]["given_name"] == "Pat"
 
-        assert row["parent_order"][0]["parent"]["entity_identifier"] == "ORDPARENT"
+        assert row["parent_order"][0]["placer_assigned_identifier"]["entity_identifier"] == "ORDPARENT"

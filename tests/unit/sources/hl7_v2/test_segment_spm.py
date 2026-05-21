@@ -46,7 +46,7 @@ class TestSPMMissingFields:
         )
         row = _extract_spm(msg.get_segment("SPM"))
         assert row["set_id"] == 1
-        assert row["specimen_id_parent"] is None
+        assert row["specimen_id_placer_assigned_identifier"] is None
         assert row["specimen_type"] is None
         assert row["specimen_type_text"] is None
         assert row["specimen_source_site"] is None
@@ -78,11 +78,11 @@ class TestSPMNewComposites:
             "SPM|" + "|".join(seg_fields)
         )
         row = _extract_spm(msg.get_segment("SPM"))
-        assert row["specimen_id_parent"] == "SPEC123"
-        assert row["specimen_id_parent_namespace_id"] == "NS1"
-        assert row["specimen_id_parent_universal_id"] == "OID1"
-        assert row["specimen_id_parent_universal_id_type"] == "ISO"
-        assert row["specimen_id_child"] == "PARENT99"
+        assert row["specimen_id_placer_assigned_identifier"] == "SPEC123"
+        assert row["specimen_id_placer_assigned_identifier_namespace_id"] == "NS1"
+        assert row["specimen_id_placer_assigned_identifier_universal_id"] == "OID1"
+        assert row["specimen_id_placer_assigned_identifier_universal_id_type"] == "ISO"
+        assert row["specimen_id_filler_assigned_identifier"] == "PARENT99"
 
         assert row["specimen_collection_amount"] == "10.5"
         assert row["specimen_collection_amount_units"] == "mL"

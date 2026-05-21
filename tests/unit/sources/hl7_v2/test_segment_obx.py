@@ -127,13 +127,13 @@ class TestOBXEipArrayPromotion:
         row = _extract_obx(msg.get_segment("OBX"))
         eips = row["observation_related_specimen"]
         assert len(eips) == 2
-        assert eips[0]["parent"]["entity_identifier"] == "SP001"
-        assert eips[0]["parent"]["namespace_id"] == "LAB"
-        assert eips[0]["parent"]["universal_id"] == "urn:lab"
-        assert eips[0]["parent"]["universal_id_type"] == "ISO"
-        assert eips[0]["child"]["entity_identifier"] == "CHILD001"
-        assert eips[1]["parent"]["entity_identifier"] == "SP002"
-        assert eips[1]["child"]["entity_identifier"] == "CHILD002"
+        assert eips[0]["placer_assigned_identifier"]["entity_identifier"] == "SP001"
+        assert eips[0]["placer_assigned_identifier"]["namespace_id"] == "LAB"
+        assert eips[0]["placer_assigned_identifier"]["universal_id"] == "urn:lab"
+        assert eips[0]["placer_assigned_identifier"]["universal_id_type"] == "ISO"
+        assert eips[0]["filler_assigned_identifier"]["entity_identifier"] == "CHILD001"
+        assert eips[1]["placer_assigned_identifier"]["entity_identifier"] == "SP002"
+        assert eips[1]["filler_assigned_identifier"]["entity_identifier"] == "CHILD002"
 
     def test_observation_related_specimen_absent_yields_none(self):
         msg = parse_message(
