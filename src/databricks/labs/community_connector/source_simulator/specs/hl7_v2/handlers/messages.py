@@ -54,16 +54,16 @@ def _matches(record: Dict[str, Any], clauses: List[Tuple[str, str, str]]) -> boo
         if actual is None:
             return False
         if op == ">":
-            if not (actual > value):
+            if actual <= value:
                 return False
         elif op == ">=":
-            if not (actual >= value):
+            if actual < value:
                 return False
         elif op == "<":
-            if not (actual < value):
+            if actual >= value:
                 return False
         elif op == "<=":
-            if not (actual <= value):
+            if actual > value:
                 return False
         elif op == "=":
             if actual != value:
