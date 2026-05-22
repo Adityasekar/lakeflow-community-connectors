@@ -1,30 +1,27 @@
 name: Tests
 
-# Trigger model (full rationale in .github/workflows/pylint.yml).
+# Trigger model (full rationale in .github/workflows/pylint.yml):
 #
-# All PR events route through a single `pull_request_target` trigger
-# (base-repo context, OIDC available). The `Authorize` step at the top
-# of each gated job decides whether the rest runs:
-#
-#   * push to master           — always runs.
-#   * same-repo PR (any event) — runs.
-#   * fork PR opened/sync/etc. — Authorize fails the job (red X on PR).
-#   * fork PR labeled          — runs *only* if `safe-to-test` is on the
-#                                PR's labels. The label auto-strips on
-#                                every push (strip-safe-to-test.yml) so
-#                                each new commit re-requires approval.
-#
-# We use a step-level shell gate instead of a job-level `if:` because
-# GitHub's workflow validator rejected the latter form (PR #193 chased
-# this; symptom was `startup_failure` for every event). The step-level
-# gate runs *before* `actions/checkout`, so no fork code touches the
-# runner unless authorized.
+#   * push to master            — internal/trusted; OIDC available.
+#   * pull_request (same-repo)  — internal-branch PRs only; OIDC available.
+#                                 Fork-PR pull_request events also fire here
+#                                 (we can't filter at trigger level), but
+#                                 the `changes` job's `if` skips them.
+#   * pull_request_target       — *only* on label add. A maintainer adding
+#     types: [labeled]            the `safe-to-test` label is the explicit
+#                                 approval signal that this fork commit is
+#                                 safe to execute with secrets in scope.
+#                                 The label is auto-stripped on every push
+#                                 (.github/workflows/strip-safe-to-test.yml)
+#                                 so each new commit re-requires approval.
 on:
   push:
     branches: [master]
+  pull_request:
+    branches: [master]
   pull_request_target:
     branches: [master]
-    types: [opened, synchronize, reopened, labeled]
+    types: [labeled]
 
 permissions:
   contents: read
@@ -33,6 +30,11 @@ permissions:
 jobs:
   # Detect which paths changed
   changes:
+    # Gate fork PRs behind the `safe-to-test` label. See trigger model above.
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'pull_request_target' && github.event.label.name == 'safe-to-test' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on:
       group: databrickslabs-protected-runner-group
       labels: linux-ubuntu-latest
@@ -43,27 +45,6 @@ jobs:
       community_connector: ${{ steps.check.outputs.community_connector }}
       sources: ${{ steps.check.outputs.sources }}
     steps:
-      - name: Authorize
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          BASE_REPO: ${{ github.repository }}
-          HAS_SAFE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'safe-to-test') }}
-        run: |
-          if [ "$EVENT_NAME" = "push" ]; then
-            echo "OK: push to master."
-            exit 0
-          fi
-          if [ "$HEAD_REPO" = "$BASE_REPO" ]; then
-            echo "OK: same-repo PR ($HEAD_REPO)."
-            exit 0
-          fi
-          if [ "$HAS_SAFE_LABEL" = "true" ]; then
-            echo "OK: fork PR with safe-to-test label."
-            exit 0
-          fi
-          echo "::error title=Fork PR not authorized::Apply the 'safe-to-test' label to run CI against this commit. See CONTRIBUTING.md."
-          exit 1
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       # cannot use dorny because of ip allowlisting
       # - uses: dorny/paths-filter@v3
@@ -77,7 +58,7 @@ jobs:
             BASE_SHA="${{ github.event.before }}"
             HEAD_SHA="${{ github.event.after }}"
           else
-            # pull_request_target (same-repo any event, or fork labeled safe-to-test)
+            # pull_request (same-repo) or pull_request_target (labeled fork)
             BASE_SHA="${{ github.event.pull_request.base.sha }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
           fi
