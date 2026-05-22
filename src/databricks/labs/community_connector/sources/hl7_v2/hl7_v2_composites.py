@@ -317,11 +317,11 @@ def _sps_fields(seg: HL7Segment, field_n: int, prefix: str) -> dict:
     return {
         f"{prefix}":                            gsc(1, 1) or gc(1),  # SPS.1.1 (CWE.1 source code)
         f"{prefix}_text":                       gsc(1, 2),           # SPS.1.2 (CWE.2 source text)
-        f"{prefix}_additives":                  gsc(2, 1) or gc(2),  # SPS.2.1 (CWE.1 additives code)
+        f"{prefix}_additives":                  gsc(2, 1) or gc(2),  # SPS.2.1 (CWE.1 additives)
         f"{prefix}_collection_method":          gc(3),               # SPS.3 (TX)
         f"{prefix}_body_site":                  gsc(4, 1) or gc(4),  # SPS.4.1 (CWE.1 body site)
         f"{prefix}_site_modifier":              gsc(5, 1) or gc(5),  # SPS.5.1 (CWE.1 site modifier)
-        f"{prefix}_collection_method_modifier": gsc(6, 1) or gc(6),  # SPS.6.1 (CWE.1 method modifier)
+        f"{prefix}_collection_method_modifier": gsc(6, 1) or gc(6),  # SPS.6.1 (CWE.1 method mod)
         f"{prefix}_role":                       gsc(7, 1) or gc(7),  # SPS.7.1 (CWE.1 specimen role)
     }
 
@@ -411,7 +411,8 @@ def _fc_array_fields(seg: HL7Segment, field_n: int, column_name: str) -> dict:
 
 
 def _tq_array_fields(seg: HL7Segment, field_n: int, column_name: str) -> dict:
-    """TQ (Timing Quantity) — repeating: ARRAY<STRUCT<quantity, interval_repeat_pattern, ..., total_occurrences>>.
+    """TQ (Timing Quantity) — repeating:
+    ARRAY<STRUCT<quantity, interval_repeat_pattern, ..., total_occurrences>>.
     Deprecated in v2.5; supported here for older (v2.3/v2.4) messages."""
     raw = seg.get_field(field_n)
     if not raw:
@@ -480,7 +481,7 @@ def _moc_fields(seg: HL7Segment, field_n: int, prefix: str) -> dict:
 
     return {
         f"{prefix}_monetary_amount":           gsc(1, 1) or gc(1),  # MOC.1.1 (MO.1 quantity, NM)
-        f"{prefix}_monetary_amount_currency":  gsc(1, 2),            # MOC.1.2 (MO.2 denomination, ID)
+        f"{prefix}_monetary_amount_currency":  gsc(1, 2),            # MOC.1.2 (MO.2 denom, ID)
         f"{prefix}_charge_code":               gsc(2, 1) or gc(2),  # MOC.2.1 (CWE.1 code)
         f"{prefix}_charge_code_text":          gsc(2, 2),            # MOC.2.2 (CWE.2 text)
         f"{prefix}_charge_code_coding_system": gsc(2, 3),            # MOC.2.3 (CWE.3 coding system)
@@ -991,9 +992,11 @@ def _xad_array_fields(
 def _eip_array_fields(
     seg: HL7Segment, field_n: int, column_name: str
 ) -> dict:
-    """EIP (Entity Identifier Pair) — all repetitions as a list of {placer_assigned_identifier, filler_assigned_identifier} dicts.
+    """EIP (Entity Identifier Pair) — all repetitions as a list of
+    {placer_assigned_identifier, filler_assigned_identifier} dicts.
 
-    Each EIP has two components (EIP.1 = Placer Assigned Identifier, EIP.2 = Filler Assigned Identifier),
+    Each EIP has two components (EIP.1 = Placer Assigned Identifier,
+    EIP.2 = Filler Assigned Identifier),
     each further decomposable into 4 sub-components via the `&` separator.
     """
     raw = seg.get_field(field_n)
