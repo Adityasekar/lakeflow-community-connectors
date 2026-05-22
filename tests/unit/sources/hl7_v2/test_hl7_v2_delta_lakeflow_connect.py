@@ -8,6 +8,7 @@ uses. To exercise a real Delta table, set ``CONNECTOR_TEST_MODE=live``.
 """
 
 from databricks.labs.community_connector.sources.hl7_v2.hl7_v2 import HL7V2LakeflowConnect
+from tests.unit.sources.hl7_v2._hl7v2_null_cols import allow_null_columns as _HL7V2_NULL_COLS
 from tests.unit.sources.test_suite import LakeflowConnectTests
 
 
@@ -15,6 +16,7 @@ class TestHL7V2DeltaConnector(LakeflowConnectTests):
     connector_class = HL7V2LakeflowConnect
     simulator_source = "hl7_v2"
     sample_records = 5
+    allow_null_columns = _HL7V2_NULL_COLS
 
     # Stand-in credentials for delta mode. The connector's
     # ``_init_delta`` only requires presence; the simulator intercepts the
