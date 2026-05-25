@@ -32,6 +32,7 @@ _SAMPLES = [
     ("sample_vxu_immunization.hl7",   "2024-01-19T12:00:00Z", "2024-01-19T12:00:05Z"),
     ("sample_oru_concat_notes.hl7",   "2024-01-20T13:00:00Z", "2024-01-20T13:00:05Z"),
     ("sample_dft_financial.hl7",      "2024-01-21T14:00:00Z", "2024-01-21T14:00:05Z"),
+    ("sample_adt_zsegments.hl7",      "2024-01-22T15:00:00Z", "2024-01-22T15:00:05Z"),
 ]
 
 _REPO = Path(__file__).resolve().parents[8]
