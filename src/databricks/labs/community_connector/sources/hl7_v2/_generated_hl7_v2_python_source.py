@@ -47,6 +47,7 @@ from pyspark.sql.types import (
     VariantVal,
 )
 import base64
+import logging
 import requests
 
 
@@ -5338,6 +5339,8 @@ def register_lakeflow_source(spark):
     _REQUEST_TIMEOUT = 30
     _MAX_PAGE_SIZE = 1000
 
+    _LOGGER = logging.getLogger(__name__)
+
 
     # ---------------------------------------------------------------------------
     # Connector
@@ -5601,10 +5604,10 @@ def register_lakeflow_source(spark):
             if not since:
                 since = self._peek_oldest_create_time()
             if not since:
-                print(
-                    f"[HL7v2] read_table({table_name}): no start cursor resolved "
-                    f"(start_offset={start_offset}, source_type={self._source_type}). "
-                    f"Returning empty."
+                _LOGGER.info(
+                    "read_table(%s): no start cursor resolved "
+                    "(start_offset=%s, source_type=%s); returning empty.",
+                    table_name, start_offset, self._source_type,
                 )
                 return iter([]), start_offset or {}
 
@@ -5757,9 +5760,10 @@ def register_lakeflow_source(spark):
                 try:
                     it = os.scandir(path)
                 except FileNotFoundError:
-                    print(
-                        f"[HL7v2 volume] volume_path not found: {path!r}. "
-                        "Verify the path exists and the pipeline has READ VOLUME on it."
+                    _LOGGER.warning(
+                        "volume_path not found: %r. Verify the path exists and "
+                        "the pipeline has READ VOLUME on it.",
+                        path,
                     )
                     return
                 with it as entries:
@@ -5794,13 +5798,13 @@ def register_lakeflow_source(spark):
                 except OSError:
                     continue
                 mtime_iso = self._mtime_to_rfc3339(stat.st_mtime)
-                if not (since < mtime_iso <= until):
+                if mtime_iso <= since or mtime_iso > until:
                     continue
                 try:
                     with open(entry.path, "r", encoding="utf-8", errors="replace") as f:
                         raw = f.read()
                 except OSError as exc:
-                    print(f"[HL7v2 volume] Skipping unreadable file {entry.path!r}: {exc}")
+                    _LOGGER.warning("Skipping unreadable file %r: %s", entry.path, exc)
                     continue
                 if not raw:
                     continue
