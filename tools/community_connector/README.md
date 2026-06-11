@@ -20,6 +20,22 @@ It is recommended to use a configuration profile with the CLI tool, just as you 
 - [How to create configuration profile](https://docs.databricks.com/aws/en/dev-tools/auth/config-profiles)
 - [How to use configuration profile](https://docs.databricks.com/aws/en/dev-tools/cli/profiles)
 
+**Selecting a Profile**:
+When `~/.databrickscfg` contains multiple profiles — especially several pointing at the same workspace host — the Databricks SDK cannot auto-pick one. Use the `DATABRICKS_CONFIG_PROFILE` environment variable to choose:
+
+```bash
+export DATABRICKS_CONFIG_PROFILE=my-profile
+community-connector create_pipeline github my_pipeline -n my_conn
+```
+
+Or set it inline for a single command:
+
+```bash
+DATABRICKS_CONFIG_PROFILE=my-profile community-connector show_pipeline my_pipeline
+```
+
+When the variable is not set, the CLI falls back to the `[DEFAULT]` profile in `~/.databrickscfg`, so that case is unambiguous regardless of how many other profiles target the same host.
+
 
 ## Installation
 
@@ -157,6 +173,62 @@ community-connector update_connection github my_github_conn \
 | `--options` | `-o` | Connection options as JSON string (required) |
 | `--spec` | `-s` | Optional: local path to connector_spec.yaml, or a GitHub repo URL |
 
+### `upload`
+
+Build and upload connector wheels to a UC Volume. By default `upload` ships
+**two** wheels per call: the root framework wheel
+(`lakeflow_community_connectors-*.whl`) and the connector wheel
+(`lakeflow_community_connectors_<source>-*.whl`). The connector declares the
+framework as a runtime dep, so shipping both keeps clusters from trying to
+fetch the framework from PyPI (where it is not published). The volume and any
+missing subdirectories are created automatically.
+
+```bash
+# Default: build + upload framework wheel and connector wheel
+community-connector upload example \
+  --volume-path /Volumes/main/default/community_connector/packages
+
+# Iterating on the connector: framework already on the volume, skip it
+community-connector upload example \
+  --volume-path /Volumes/main/default/community_connector/packages \
+  --skip-framework
+
+# Bring your own wheels
+community-connector upload example \
+  --volume-path /Volumes/main/default/community_connector/packages \
+  --wheel ./dist/lakeflow_community_connectors_example-0.1.0-py3-none-any.whl \
+  --framework-wheel ./dist/lakeflow_community_connectors-0.1.0-py3-none-any.whl
+
+# Non-conventional source layout + retain a local copy of what we built
+community-connector upload my_source \
+  --volume-path /Volumes/main/default/community_connector/packages \
+  --source-dir ./my_connector \
+  --keep-wheel ./dist
+```
+
+The build step shells out to `python -m build`, which runs setuptools inside a
+PEP 517 isolated environment — no per-connector venv setup needed. Install the
+`build` frontend once into the venv that owns the CLI:
+
+```bash
+pip install build
+```
+
+After upload, reference both wheel paths in your pipeline's
+`environment.dependencies` (e.g. via `community-connector create_pipeline
+--package <fw_path> --package <connector_path>`) so the cluster installs them
+in order.
+
+**Options:**
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--volume-path` | `-v` | UC Volume directory to upload into (required). Auto-creates the volume and any subdirectories. |
+| `--wheel` | | Pre-built connector wheel; skip building it. |
+| `--framework-wheel` | | Pre-built framework (root) wheel; skip building it. |
+| `--skip-framework` | | Do not upload the framework wheel (use when it is already on the volume). |
+| `--source-dir` | | Override the connector source directory (default: locate `sources/<source_name>/`). |
+| `--keep-wheel` | | After upload, copy any wheels built in this run into this local directory. User-supplied wheels are not copied. |
+
 ## Pipeline Spec Format
 
 The pipeline spec defines which tables to ingest and how:
@@ -194,6 +266,8 @@ objects:
 | `objects[].table.destination_table` | No | Target table name (defaults to source_table) |
 | `objects[].table.table_configuration.scd_type` | No | `SCD_TYPE_1`, `SCD_TYPE_2`, or `APPEND_ONLY` |
 | `objects[].table.table_configuration.primary_keys` | No | List of primary key columns |
+| `objects[].table.table_configuration.sequence_by` | No | Column used to order records for SCD Type 2 change tracking |
+| `objects[].table.table_configuration.cluster_by` | No | List of columns to cluster the destination Delta table by (Liquid Clustering) |
 
 ## Configuration
 
