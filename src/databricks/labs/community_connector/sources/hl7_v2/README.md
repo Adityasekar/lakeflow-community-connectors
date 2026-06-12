@@ -1,6 +1,6 @@
 # Lakeflow HL7 v2 Community Connector
 
-The Lakeflow HL7 v2 Connector parses HL7 v2 pipe-delimited messages and loads each segment type into its own Delta table, enabling structured analytics over clinical data. The connector supports incremental append-only ingestion, automatically tracking new messages by their send time.
+The Lakeflow HL7 v2 Connector parses HL7 v2 pipe-delimited messages and loads each segment type into its own Delta table, enabling structured analytics over clinical data. The connector supports incremental append-only ingestion, automatically tracking new messages by their `createTime` (GCP Healthcare API) or file modification time (Unity Catalog Volume).
 
 ## Supported Source Modes
 
