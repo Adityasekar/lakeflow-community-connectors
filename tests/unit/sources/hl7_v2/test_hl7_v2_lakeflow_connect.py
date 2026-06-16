@@ -10,9 +10,15 @@ import base64
 import json
 from unittest.mock import patch
 
+import pytest
+
 from databricks.labs.community_connector.sources.hl7_v2.hl7_v2 import HL7V2LakeflowConnect
 from tests.unit.sources.hl7_v2._hl7v2_null_cols import allow_null_columns as _HL7V2_NULL_COLS
-from tests.unit.sources.test_suite import LakeflowConnectTests
+from tests.unit.sources.test_suite import (
+    MODE_SIMULATE,
+    LakeflowConnectTests,
+    _resolve_env_mode_for_simulator,
+)
 
 
 def _gcp_message(message_id: str, create_time: str, send_time: str) -> dict:
@@ -128,7 +134,13 @@ class TestHL7V2Connector(LakeflowConnectTests):
         Exercises the full pipeline: simulator → list/get message →
         base64-decode → parse HL7 → fallback to ``_extract_generic`` for
         an unknown segment → propagate metadata / raw_segment / segment_type.
+
+        Simulate mode only: the assertion depends on the fixed simulator
+        corpus message ``sample_adt_zsegments``; a live source has no such
+        guaranteed Z-segment content.
         """
+        if _resolve_env_mode_for_simulator(self.simulator_source) != MODE_SIMULATE:
+            pytest.skip("Z-segment corpus assertions only run in simulate mode")
         iterator, offset = self.connector.read_table(
             self._Z_TABLE, {}, self._Z_OPTS
         )
@@ -175,7 +187,11 @@ class TestHL7V2Connector(LakeflowConnectTests):
         controls which segments are emitted — switching it from ZPI to ZIN
         on the same connector instance yields a different (non-overlapping)
         row set.
+
+        Simulate mode only (depends on the fixed simulator corpus).
         """
+        if _resolve_env_mode_for_simulator(self.simulator_source) != MODE_SIMULATE:
+            pytest.skip("Z-segment corpus assertions only run in simulate mode")
         zin_opts = {"segment_type": "ZIN", "window_seconds": "31536000"}
         iterator, _ = self.connector.read_table("custom_zin", {}, zin_opts)
         zin_rows = list(iterator)
@@ -195,7 +211,11 @@ class TestHL7V2Connector(LakeflowConnectTests):
         ``set_id`` here even though Z-segments are multi-segment.  Every key
         the connector emits must be declared by the generic schema, otherwise
         the framework drops the column or errors during row→Arrow coercion.
+
+        Simulate mode only (depends on the fixed simulator corpus).
         """
+        if _resolve_env_mode_for_simulator(self.simulator_source) != MODE_SIMULATE:
+            pytest.skip("Z-segment corpus assertions only run in simulate mode")
         schema_names = set(
             self.connector.get_table_schema(self._Z_TABLE, self._Z_OPTS).fieldNames()
         )

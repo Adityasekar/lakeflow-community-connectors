@@ -225,7 +225,7 @@ Source: [Caristix HL7v2.5.1 PID](https://hl7-definition.caristix.com/v2/HL7v2.5.
 | PID.22 | Ethnic Group | CWE | O | 250 | * | Ethnicity (Table 0189). Stored as `ARRAY<STRUCT<...9 CWE fields...>>` |
 | PID.23 | Birth Place | ST | O | 250 | 1 | Birth location. Spark column: `birth_place` |
 | PID.24 | Multiple Birth Indicator | ID | O | 1 | 1 | Y/N (Table 0136). Spark column: `multiple_birth_indicator` |
-| PID.25 | Birth Order | NM | O | 2 | 1 | Birth order for multiple births. Spark column: `birth_order` (IntegerType) |
+| PID.25 | Birth Order | NM | O | 2 | 1 | Birth order for multiple births. Spark column: `birth_order` (LongType) |
 | PID.26 | Citizenship | CWE | O | 250 | * | Citizenship (Table 0171). Stored as `ARRAY<STRUCT<...9 CWE fields...>>` |
 | PID.27 | Veterans Military Status | CWE | O | 250 | 1 | Veterans status (Table 0172). Spark columns: `veterans_military_status`, etc. (9 CWE cols) |
 | PID.28 | Nationality | CWE | B | 250 | 1 | Deprecated. Spark columns: `nationality`, etc. (9 CWE cols) |
